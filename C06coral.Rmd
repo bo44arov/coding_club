@@ -1,0 +1,388 @@
+# Negative binomial GLM {#nb-model6}
+
+A negative binomial GLM is used for the same type of data that a Poisson GLM would be used to analyse; count data that does not take values below zero. However, the negative binomial GLM does not assume that the variance of the response variable is equal to its mean and, therefore, can be used to model overdispersed data, which is a common property of ecological data. Formulation of a Bayesian negative binomial GLM is slightly more complex than the Bayesian Poisson GLM presented in Chapter 5, and a negative binomial GLM is typically used when a Poisson GLM is not appropriate due to overdispersion.
+
+## Coral abundance
+
+We fit a GLM to data on coral diversity in the Sulu Sea off the north coast of Borneo. Surveys of Scleractinia (hard corals) species were conducted on reefs inside and outside a marine protected area established 5 years previously. Surveys were conducted at specific depths, ranging from 3-10 m. A randomly demarcated area of 100 m^2^ was comprehensively searched by a pair of divers and the number of coral species recorded on a slate board. All coral species were photographed to confirm _in situ_ identification using a reference collection. Survey sites were at least 8 km apart and were surveyed only once.
+
+Here we analyse data on coral diversity on reefs inside and outside a protected area while controlling for water depth, which is a variable known to have a strong effect on coral diversity. The aim of the study was to understand the short-term impact of implementing a marine protected area in zones from which all fishing and tourism was prohibited.
+
+*__Load libraries__*
+
+```{r ch6_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(xtable)
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the `read.csv` function.  
+
+```{r ch6-import-coral, echo=TRUE, warning=FALSE, message=FALSE}
+coral <- read.csv(file = "coral.csv", 
+                header = TRUE, 
+                   dec = ".", 
+      stringsAsFactors = TRUE,)
+```
+
+Start by inspecting dataframe `coral`:  
+
+```{r ch6-str-coral, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(coral, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises `r nrow(coral)` observations of `r ncol(coral)` variables. Each row in the dataframe represents a separate surveyed reef (`site`). There is a single categorical variable `status` which indicates whether the reef was a protected or unprotected site. There are two continuous ecological variables: `depth` is water depth (in m) for each surveyed reef, and `species` is the number of scleractinian coral species.  
+
+For clarity, let's rename the two levels of `status` using the `recode` function:  
+
+```{r ch6-rename, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+coral$status <- dplyr::recode(coral$status, 
+                              "pro" = "Protected", 
+                              "unp" = "Unpro")
+levels(coral$status)
+```
+
+## Six steps to fitting a GLM {#GLMsteps6}
+
+We will adopt our six-step protocol to fitting a GLM. These are:
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#coral-question}
+
+This study was conducted to ascertain the benefit of implementing a marine protected area on coral diversity. The variable `species` is the response variable and conservation status (`status`) is a covariate. Because there is a well recognised negative relationship of water depth on coral species abundance (i.e. coral diversity is greater in shallow water), water depth (`depth`) is an additional covariate. Further, the effect of reef protected status may vary with water depth, particularly in the case of the impact of tourists who tend to cause most damage to corals in shallow water. Consequently, the interaction of `status` and `depth` on coral diversity (`species`) will also be included in a model.
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt the 7 step-protocol used in previous chapters that is intended to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers6}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. GLMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variable `status` we use a boxplot to visualise how `species` varies with reef protected status (protected or unprotected).
+
+```{r ch6-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+Plot the categorical variable `status`:  
+
+(ref:ch6-box-categorical) **Boxplot of number of number of hard coral species in protected and unprotected sites in the Sulu Sea.**  
+
+```{r ch6-box-categorical, fig.cap='(ref:ch6-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+coral %>%
+  ggplot(aes(y = species, x = status)) +
+  labs(y = "Number of coral species", 
+       x = "Protected status") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+```
+
+Fig. \@ref(fig:ch6-box-categorical) visualises the median and spread of the number of hard coral species in protected and unprotected sites, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a higher average number of coral species in protected sites. The size of the IQR and range of the data are similar for both protected and unprotected sites, indicating homogeneity in the data and a lack of outliers. 
+
+To identify outliers for continuous variables we use multi-panel dotplots.
+
+```{r ch6-order, message = FALSE, echo=FALSE, warning=FALSE}
+coral <- coral %>%
+  mutate(order = seq(1:nrow(coral)))
+```
+
+And identify those continuous variables we wish to plot (`depth`, and `species`):  
+
+```{r ch6-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(coral, order, depth) 
+p2 <- multi_dotplot(coral, order, species) 
+```
+
+Finally, we use the `grid.arrange` function from the `gridExtra` package to arrange these plots in our preferred layout:  
+
+(ref:ch6-dotplot1) **Dotplots of the continuous variables `depth` and `species`. Data are arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch6-dotplot1, fig.cap='(ref:ch6-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, nrow = 1)
+```
+
+There are no obvious outliers in Fig. \@ref(fig:ch6-dotplot1).  
+  
+#### Distribution of the dependent variable {#nb-dist6}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise coral species number with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+(ref:ch6-freqdens) **Density plot of number of coral species from 32 surveyed reefs.**
+  
+```{r ch6-freqdens, fig.cap='(ref:ch6-freqdens)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+  
+coral %>%  
+  ggplot(aes(species)) +  
+  geom_density() +  
+  xlab("Number of coral species") +  
+  ylab("Density") +  
+  xlim(25,125) +  
+  My_theme
+```
+
+The density plot of the dependent variable (Fig. \@ref(fig:ch6-freqdens)) shows a distribution with a positive skew. 
+  
+#### Balance of categorical variables {#nb-balance6}
+
+The balance of the categorical variable `status` (the protected status of surveyed reefs) can be checked using the `table` function.
+
+```{r ch6-status-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(coral$status)
+```
+
+The design of the study is well balanced with respect to protected status.  
+  
+#### Zeros in the response variable {#nb-zeros6}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The percentage of zeros in the response variable can be calculated with:  
+
+```{r ch6-zeros, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(coral$species == 0) / nrow(coral))*100,0)
+```
+
+The response variable does not include any zeros.  
+
+#### Multicollinearity among covariates {#nb-collin6}  
+
+If covariates in a model are correlated, then there is a risk that the model may produce unstable parameter estimates with inflated standard errors. Here we examine the relationships among model covariates using the `ggpairs` command from the `GGally` library.  
+
+(ref:ch6-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, and frequency polygons.**  
+
+```{r ch6-ggpairs, fig.cap='(ref:ch6-ggpairs)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+coral %>% 
+    ggpairs(columns = c("status","depth"), 
+         aes(colour = status, alpha = 0.8), 
+              lower = list(combo = wrap("facethist", 
+           binwidth = 2)))
+```
+
+The plot matrix in Fig. \@ref(fig:ch6-ggpairs) indicates no evidence of collinearity.     
+#### Relationships among dependent and independent variables {#nb-rels6}
+
+Visual inspection of the data using plots will illustrate the nature of relationships among model covariates:
+
+(ref:ch6-scatter) **Multipanel scatterplot of number of coral species against water depth for protected and unprotected reefs with a line of best fit plotted.**
+
+```{r ch6-scatter, fig.cap='(ref:ch6-scatter)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(coral, aes(x = depth, y = (species))) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, 
+             height = 0.5, width = 0.25) +
+  geom_smooth(formula = y ~ x, method = 'lm', 
+              se = FALSE, linewidth = 1.5) +
+  My_theme +
+  xlab("Depth (m)") + ylab("Species number") +
+  facet_grid(.~status)
+```
+
+The plots in Fig. \@ref(fig:ch6-scatter) suggest a negative relationship between the number of coral species and water depth, with this relationship stronger for protected than unprotected reefs, which implies a status x depth interaction.
+
+#### Independence of response variable {#nb-indep6}  
+
+The dataframe comprises 44 rows of data and the number of unique sampling sites was:  
+
+```{r ch6-site-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+length(unique(coral$site))
+```
+Which indicates that just one sample was collected from each each site.  
+
+An assumption for a GLM is that each observation in a dataset is independent of all others. In the case of the present study each row of data represents data from a survey of a geographically discrete reef, with reefs a minimum of 8 km apart. Ostensibly then, these data were independent. However, there is the potential for spatial dependency in the data based on their location. A GLM does not permit spatial (or temporal) dependency to be adequately modelled and so, for the purposes of this analysis, while we will treat the data as independent, though that may not strictly be the case.  
+
+
+### Select and fit a statistical model {#nb-select6}
+
+The study was designed to gauge the effect of implementing protection measures on coral biodiversity. The dependent variable comprises coral species counts that potentially includes zero, though negative values are not possible. The data exploration indicated that there are no zeros in the response variable. The distribution of the response variable is positively skewed  (Fig. \@ref(fig:ch6-freqdens)) and there appears to be an interaction between `depth` and `status`, though these variables are not collinear. The data will treated as independent, though there is the potential for spatial dependency in the data.
+
+Given these circumstances, a Poisson is an appropriate distribution as a starting point to model the data, in combination with a log link function. The Poisson is a non-normal distribution that is effective for modelling strictly positive integer data (such as counts). It has a single parameter (lambda, $\lambda$), which is both the mean and variance of the response variable.  
+
+The link function is used to link the response variable (number of coral species) and the predictor function (protected status and water depth). In the case of a Poisson GLM the default is a log link function. The link function is needed to ensure model fitted values remain positive, while permitting zeros in the data.  
+
+The Poisson model will include both main terms and a 2-way interaction, fitted using the `glmmTMB` package.  
+
+```{r ch6-pois1, message=FALSE, echo=TRUE, warning=FALSE}
+pois1 <- glmmTMB(species ~ depth * status,
+                 family = poisson(link = "log"),
+                   data = coral)
+```
+
+### Conduct model checks  
+
+First check the dispersion parameter. Poisson GLMs assume that the mean and variance of the response variable vary at the same rate. This assumption must be confirmed. Overdispersion means that a Poisson distribution does not adequately model the variance (i.e. the variance exceeds the mean) and is not appropriate for the model.  
+
+```{r ch6-over1, message=FALSE, echo=TRUE, warning=FALSE}
+check_overdispersion(pois1)
+```
+
+The Poisson model is overdispersed.
+
+As an alternative, we'll try a **negative binomial** distribution with the same model formulation:
+
+```{r ch6-nb1, message=FALSE, echo=TRUE, warning=FALSE}
+nb1 <- glmmTMB(species ~ depth * status,
+               family = nbinom1(link = "log"),
+                 data = coral)
+```
+
+And check dispersion:  
+  
+
+```{r ch6-over2, message=FALSE, echo=TRUE, warning=FALSE}
+check_overdispersion(nb1)
+```
+
+Mild, but non-significant, overdispersion.
+
+We can also compare AIC scores for the Poisson and negative binomial models:
+
+```{r ch6-aic-comp, comment = "", message = FALSE, echo=TRUE, warning=FALSE}
+round(AIC(pois1,nb1),0)
+```
+
+TBased on AIC, the negative binomial model gives a much improved fit to the data.
+
+Continue with model checks by using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values.
+
+```{r ch6-simRes1, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = nb1, plot = F)
+```
+
+Homogeneity of residual variance can be assessed by plotting model residual variance against fitted values:   
+
+```{r ch6-plotRes1a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Next, plot model residuals against each covariate in the model separately:  
+
+```{r ch6-plotRes1b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = coral$depth)
+plotResiduals(Res1, form = coral$status)
+```
+
+There is also no problem with the pattern of these residuals.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch6-plotQQnb1, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res1)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model.   
+  
+### Interpret and present model output  
+
+Specification of the negative binomial GLM using mathematical notation takes the form:
+
+$Species_{i}$ ~ $NegBin(\mu_{i}, k)$
+
+_E_($Species_{i}$) = $\mu_i$   and   var($Species_{i}$) = $\mu_i$ + ($\mu_i^2 / k$)
+
+_log_$\mu_i$ = $\eta_i$
+
+$\eta_i$ = $\beta_1$ + $\beta_2$ x $Depth_{i}$ + $\beta_3$ x $Status_{i}$ + $\beta_4$ x $Depth_{i} : Status_{i}$
+
+Where $Species_{i}$ is the number of scleractinian coral species at sample site _i_ assuming a negative binomial distribution with mean $\mu_i$ and variance $\mu_i$ + ($\mu_i^2 / k$). The parameter _k_ is the dispersion parameter and deals with the extra variance in the data. $Depth_{i}$ is water depth for sample site _i_, and $Status_{i}$ is the protected status of the reef at sample site _i._ Note that the model has a log link function
+
+Obtain model output with:  
+
+```{r ch6-sumnb1, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(nb1)
+print(out, digits = 1, signif.stars=FALSE)
+```
+
+Table 6.1: **Mean estimates for the number of hard coral species at sites in the Sulu Sea as a function of water depth (m), protected status, and their interaction, modelled using a negative binomial GLM.**
+
+|Model parameter                             |Estimate|Z value|P value|
+|:-------------------------------------------|:------:|:-----:|:-----:|
+|Intercept                                   |  4.76  | 0.09  | <0.001|
+|Depth                                       | -0.07  | 0.01  | <0.001|
+|Reef status(Unprotected)                    | -1.17  | 0.16  | <0.001|
+|Depth : Reef status(Unprotected)            |  0.11  | 0.02  | <0.001|  
+  
+These results (Table 6.1) show a statistically significant negative effect of depth and reef protected status on coral biodiversity as well as an interaction between covariates.  
+
+### Visualise the results  
+
+The final step to fitting a GLM is to visualise the model. We can plot model `Pois9` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch6-final-plot) **Mean number of coral species from sampling sites in the Sulu Sea as a function of water depth (m) and protected status, modelled using a negative binomial GLM. Shaded areas are 95% confidence intervals. Points are observed data for different sampling sites.**  
+
+```{r ch6-final-plot, fig.cap='(ref:ch6-final-plot)', fig.align ='center', fig.dim = c(6,5), message=FALSE, echo=TRUE, warning=FALSE}
+set_theme(legend.pos = "top")
+plot_model(nb1, type = "eff", 
+               terms = c("depth", "status"),
+              colors = c("mediumblue","red2"),
+           show.data = TRUE,
+              jitter = 0.2,
+               title = "", 
+          axis.title = c("Water depth (m)",
+                         "Coral species diversity"),
+         show.legend = TRUE,
+        legend.title = ("Reef protected status")) + 
+        scale_x_continuous(limits = c(1.5, 11.9)) +
+                    My_theme
+           
+```
+
+The results of this statistical analysis can be summarised as follows:  
+
+_A negative binomial GLM was fitted to data for the number of scleractinian coral species  from 32 sampling 100 m$^2$ sites in the Sulu Sea. There was a statistically significant negative effect of water depth on number of coral species. There was also a statistically important effect of protected status, with fewer coral species in unprotected sites. Finally, there was an interaction between depth and protected status, with a steeper negative relationship between water depth and number of coral species at protected sites (Table 6.1), Fig. \@ref(fig:ch6-final-plot)._
+
+## Conclusions
+
+In this analysis we identified a problem with overdispersion in a Poisson GLM. Overdispersion in the Poisson model was treated as true overdispersion, with a GLM fitted with a negative binomial distribution, which successfully modelled the extra variance in the data. The goodness of fit of the negative binomial model, measured by AIC, was also superior to the Poisson GLM.
+
+  

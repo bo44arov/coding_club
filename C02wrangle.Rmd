@@ -1,0 +1,315 @@
+# Data wrangling {#wrangle}
+
+Data presented in statistics textbooks and workshops, are typically carefully curated, neatly ordered and ready for analysis. In reality, data are more unstructured, poorly labelled and often require organising prior to analysis.
+
+_Data wrangling_ is the process of converting untidy and disorganised data into a form ready for analysis. It is a vital step and R lends itself to the process.
+
+In this Chapter some of the capabilities of R for data wrangling will be explored, again using the data for blue tit nests from Wytham Wood.
+
+First, we load required libraries (see Section \@ref(functions)) and import the data (see Section \@ref(import)).
+
+*__Load libraries__*
+
+```{r ch2_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(dplyr)
+library(car)
+library(ggplot2)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(tidyr)
+```
+
+*__Import data__*
+
+Data for blue tit nests are saved in the comma-separated file _cyan.csv_ and can be imported into a dataframe in R using the command:  
+
+```{r ch2-import-cyan, echo=TRUE, warning=FALSE, message=FALSE}
+cyan <- read.csv(file = "cyan.csv", 
+               header = TRUE,
+                  dec = ".", 
+     stringsAsFactors = TRUE)
+```
+
+Start by inspecting the dataframe using the structure function `str`:
+
+```{r ch2-str-cyan, echo=TRUE, warning=FALSE, message=FALSE}
+str(cyan, width = 50, strict.width = "cut")
+```
+
+The arguments `width = 50, strict.width = "cut"` limits the amount of information presented.
+
+The dataframe comprises 438 observations of 7 variables. Each row in the dataframe represents a record for a blue tit nest. The variable `id` is a unique identifier for an artificial nest box in which a nest was found. Note that there are fewer levels of `id` than observations, which indicates there are multiple records (in different years) for different nests in the same nest box. This is a potential problem and we will revisit this point later. The variable `zone` represents discrete woodland compartments within Wytham Woods; there are nine levels of this categorical variable. These zones represent a discrete stand of trees in the woodland, where the composition of vegetation varies due to past management. The variable `year` is the year of data collection (varying from 2001-2003). The categorical variable `multi` indicates whether the female that built the nest bred more than once in that year (two levels; no or yes). `Height` is a continuous variable and is the vertical height (in m) at which the nest box containing the nest is attached to a tree. `Day` represents the number of days after the 1st April in a given year that the first egg was laid in the nest. Finally, `depth` is the depth of the nest, recorded as a proportion of the nest box that was filled with nesting material. Nest depth, which represents a measure of nest size, may indicate blue tit body condition or access to resources and will be our main variable of interest; i.e. our ‘response variable’.
+
+## Selecting variables
+
+Using the `select` command we can create a new dataframe with a set of variables of interest.
+
+Here we create a new dataframe `cyan1` containing only the variables `year`, `height`, `day`, `depth` selected from `cyan`.
+
+```{r ch2-select1, echo=TRUE, warning=FALSE, message=FALSE}
+cyan1 <- select(cyan, year, height, day, depth)
+glimpse(cyan1, width = 50, strict.width = "cut")
+```
+
+We can similarly create dataframe `cyan2` by selecting all variables from `year` - `depth` in the dataframe `cyan`.
+
+```{r ch2-select2, echo=TRUE, warning=FALSE, message=FALSE}
+cyan2 <- select(cyan, year:depth)
+glimpse(cyan2, width = 50, strict.width = "cut")
+```
+
+Alternatively, we might wish to create a new dataframe based on specific characters in the variable headings. Here we create dataframe `cyan3` comprising only variable names that _contain_ the letter _'t'_.
+
+```{r ch2-select3, echo=TRUE, warning=FALSE, message=FALSE}
+cyan3 <- select(cyan, contains('t'))
+glimpse(cyan3, width = 50, strict.width = "cut")
+```
+
+Similarly useful are commands that allow selection of variables that _begin_ with a specific character (`starts_with()`) or _end_ with a specific character (`ends_with()`).
+
+An alternative to specifying which variables to include in a new dataframe, we state which are to be removed. Here we create dataframe `cyan4` by dropping variables `id`, `multi` and `day` using a minus ('-') sign.
+
+```{r ch2-select4, echo=TRUE, warning=FALSE, message=FALSE}
+cyan4 <- select(cyan, -id, -multi, -day)
+glimpse(cyan4, width = 50, strict.width = "cut")
+```
+
+By preceding a variable or character with a minus sign we can also exclude variables that start, end or contain a specific character using `-starts_with()`, `-ends_with()` or `-contains()`, respectively. So, we create dataframe `cyan5` comprising variable names that _exclude_ the letter _'t'_.
+
+```{r ch2-select5, echo=TRUE, warning=FALSE, message=FALSE}
+cyan5 <- select(cyan, -contains('t'))
+glimpse(cyan5, width = 50, strict.width = "cut")
+```
+
+The `select_if` is used to select variables that meet particular conditions. So, we can retain variables that only comprise integers (whole numbers) by specifying `is.character`:
+
+```{r ch2-select6, echo=TRUE, warning=FALSE, message=FALSE}
+cyan6 <- select_if(cyan, is.integer)
+glimpse(cyan6, width = 50, strict.width = "cut")
+```
+To retain only character variables we can similarly use `is.character` and for numerical variables `is.numeric`.
+
+An additional way to use `select` is in reorganising the order of variables in a dataframe. So, we can reorganise variables in the `cyan` dataframe to place `year`, `day`, and `depth` first, followed by all the remaining variables by adding `everything`.
+
+```{r ch2-select7, echo=TRUE, warning=FALSE, message=FALSE}
+cyan7 <- select(cyan, year, day, depth, everything())
+glimpse(cyan7, width = 50, strict.width = "cut")
+```
+
+Finally, we may wish to change the order of variables, while simultaneously excluding some. Here we place `zone` first, followed by all other variables (using `everything`), while excluding `year` and `multi`.
+
+```{r ch2-select8, echo=TRUE, warning=FALSE, message=FALSE}
+cyan8 <- select(cyan, zone, everything(), - year, -multi)
+glimpse(cyan8, width = 50, strict.width = "cut")
+```
+
+## Renaming variables
+
+In combination with the `select` command we can easily rename variables in a new dataframe.
+
+Here we select `zone`, `multi` and `depth`, but change `zone` to `type`, `multi` to `double` and leave `depth` unchanged.
+
+```{r ch2-select9, echo=TRUE, warning=FALSE, message=FALSE}
+cyan9 <- select(cyan, type=zone,  
+                double=multi, depth)
+glimpse(cyan9, width = 50, strict.width = "cut")
+```
+
+We might also wish to change the case of variable names. For example, we may want to make character or numerical/integer variables upper case so that we can recognise them more readily. We can make this change using `rename_if`.
+
+```{r ch2-select10, echo=TRUE, warning=FALSE, message=FALSE}
+cyan10 <- rename_if(cyan, is.numeric, str_to_upper)
+glimpse(cyan10, width = 50, strict.width = "cut")
+```
+
+## Choosing specific variables
+
+We can use `slice` and `filter` to select specific subsets of a dataframe. For example, `slice` can be used to select specific data rows; here rows 10,20,30,40,50,60,70,80,90,100.
+
+```{r ch2-select11, echo=TRUE, warning=FALSE, message=FALSE}
+cyan11 <- slice(cyan, c(10,20,30,40,50,60,70,80,90,100))
+glimpse(cyan11, width = 50, strict.width = "cut")
+```
+
+Or a range or data rows, here rows 10-39.
+
+```{r ch2-select12, echo=TRUE, warning=FALSE, message=FALSE}
+cyan12 <- slice(cyan, c(10:39))
+glimpse(cyan12, width = 50, strict.width = "cut")
+```
+
+`Slice` can also be used to remove specific rows of data. For example, to remove rows 8, 22,56 and 77:
+
+```{r ch2-select13, echo=TRUE, warning=FALSE, message=FALSE}
+cyan13 <- slice(cyan, -8,-22,-56,-77)
+glimpse(cyan13, width = 50, strict.width = "cut")
+```
+
+In contrast to `slice`, `filter` is used to extract observation based on their values. For example, to select nest data only for 2002:
+
+```{r ch2-select14, echo=TRUE, warning=FALSE, message=FALSE}
+cyan14 <- filter(cyan, year == 2002)
+glimpse(cyan14, width = 50, strict.width = "cut")
+```
+
+Multiple variables can be filtered simultaneously. For example, to retain nests only from 2002 that were double clutches:
+
+```{r ch2-select15, echo=TRUE, warning=FALSE, message=FALSE}
+cyan15 <- filter(cyan, year == 2002, multi == 'yes')
+glimpse(cyan15, width = 50, strict.width = "cut")
+```
+
+Or nests only from 2002 with a depth <0.5:
+
+```{r ch2-select16, echo=TRUE, warning=FALSE, message=FALSE}
+cyan16 <- filter(cyan, year == 2002, depth <= 0.5)
+glimpse(cyan16, width = 50, strict.width = "cut")
+```
+
+Or only select nests at a height <2 m or >2.5 m.
+
+```{r ch2-select17, echo=TRUE, warning=FALSE, message=FALSE}
+cyan17 <- filter(cyan, height <2 | height >2.5)
+glimpse(cyan17, width = 50, strict.width = "cut")
+```
+
+Or >= 2 m, but <=2.5 m.
+
+```{r ch2-select18, echo=TRUE, warning=FALSE, message=FALSE}
+cyan18 <- filter(cyan, height >= 2, height <= 2.5)
+glimpse(cyan18, width = 50, strict.width = "cut")
+range(cyan18$height)
+```
+
+## Changing variables
+
+The `mutate` command can be used to make changes to variables in a dataframe or create new ones. Here we create new logical variable called `C2` that identifies nests from `zone` "C" in 2002.
+
+```{r ch2-select19, echo=TRUE, warning=FALSE, message=FALSE}
+cyan19 <-mutate(cyan, C2= year == 2002 & zone == 'C')
+glimpse(cyan19, width = 50, strict.width = "cut")
+```
+
+Using `mutate` we can also code numerical variables as categorical. For example, we can create a new categorical variable 'fHeight' with 3 levels; `lo`, `med`, `hi`, based on nest height ranges:
+
+```{r ch2-select20, echo=TRUE, warning=FALSE, message=FALSE}
+cyan20 <- mutate(cyan, 
+                  fHeight = case_when(
+                            height <1.9 ~ 'lo',
+                            height >2.5 ~ 'hi',
+                            TRUE ~ 'med'))
+glimpse(cyan20, width = 50, strict.width = "cut")
+table(cyan20$fHeight)
+```
+
+The command `transmutate` mirrors `mutate` but removes all variables that are not specifically listed. Here we again create a new categorical variable 'fHeight' with 3 levels; low, medium, high, based on specific nest height ranges, and also add `year` and nest `depth` to dataframe `cyan22`, but all other variables are discarded.
+
+```{r ch2-select21, echo=TRUE, warning=FALSE, message=FALSE}
+cyan21 <- transmute(cyan, 
+                    fHeight = case_when(
+                      height <1.9 ~ 'lo',
+                      height >2.5 ~ 'hi',
+                      TRUE ~ 'med'),
+                      year, depth)
+glimpse(cyan21, width = 50, strict.width = "cut")
+```
+
+Finally, `recode` is a useful command that permits the renaming of different levels of a categorical variable. Here we create a new variable `area` that comprises recoded levels of the variable `zone`.
+
+```{r ch2-select22, echo=TRUE, warning=FALSE, message=FALSE}
+cyan$area <- dplyr::recode(cyan$zone, 
+                           "B"  = "managed", 
+                           "C"  = "unmanaged", 
+                           "CP" = "managed", 
+                           "O"  = "managed",
+                           "E"  = "unmanaged",
+                           "MP" = "unmanaged",
+                           "P"  = "unmanaged",
+                           "SW" = "unmanaged",
+                           "W"  = "unmanaged")
+glimpse(cyan, width = 50, strict.width = "cut")
+levels(cyan$zone)
+levels(cyan$area)
+```
+
+## Sorting dataframes
+
+A dataframe can be sorted by variables using the `arrange` command. For example, to sort (in descending order) `cyan` by `year` and then by `day`:
+
+```{r ch2-select23, echo=TRUE, warning=FALSE, message=FALSE}
+cyan23 <- arrange(cyan, year, day)
+glimpse(cyan23, width = 50, strict.width = "cut")
+```
+
+## Subsampling dataframes 
+
+We may wish to subsample from a dataframe, which is readily accomplished with the `sample_frac` command. For example, we can randomly select 10% of a dataframe.
+
+```{r ch2-select24, echo=TRUE, warning=FALSE, message=FALSE}
+cyan24 <- sample_frac(cyan, 0.1)
+glimpse(cyan24, width = 50, strict.width = "cut")
+```
+
+By default sampling occurs without replacement, but this default can be overridden with:
+
+```{r ch2-select25, echo=TRUE, warning=FALSE, message=FALSE}
+cyan25 <- sample_frac(cyan, 0.1, replace = FALSE)
+glimpse(cyan25, width = 50, strict.width = "cut")
+```
+
+In addition, rather than a proportion of a dataframe, we can randomly sample a specific number of observation with `sample_n`, in this case 15 rows of data (without replacement).
+
+```{r ch2-select26, echo=TRUE, warning=FALSE, message=FALSE}
+cyan26 <- sample_n(cyan, 15)
+glimpse(cyan26, width = 50, strict.width = "cut")
+```
+
+## Summarising variables
+
+We can summarise variables using `summarize` and `group_by`. For example, to obtain the mean values of `height`, `day` and `depth`.
+
+```{r ch2-select27, echo=TRUE, warning=FALSE, message=FALSE}
+cyan27 <- summarize(cyan,
+                     mean_height = mean(height),
+                        mean_day = mean(day),
+                      mean_depth = mean(depth))
+glimpse(cyan27, width = 50, strict.width = "cut")
+```
+
+To extract the mean values for all numerical variables in a dataframe use:
+
+```{r ch2-select28, echo=TRUE, warning=FALSE, message=FALSE}
+cyan28 <- summarize_if(cyan,
+                        is.numeric, ~mean(., ))
+glimpse(cyan28, width = 50, strict.width = "cut")
+```
+
+And to obtain summary statistics for different levels of a categorical variable, first use `group_by` to designate the grouping, then extract summary statistics for this variable.
+
+```{r ch2-select30, echo=TRUE, warning=FALSE, message=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+gp <- group_by(cyan, multi)
+summarize_at(gp, vars(depth), list(x = ~mean(.,)))
+```
+
+## Multiple commands
+
+Finally, we can use a pipe operator to perform multiple commands as a _pipeline_. 
+
+Here, we extract only nests that were not double clutches, filter nests at medium height,
+and calculate mean and sd of nest depth:
+
+```{r ch2-select31, echo=TRUE, warning=FALSE, message=FALSE}
+cyan %>%
+  filter(multi == 'no') %>%
+  select(height, depth) %>% 
+  mutate(fHeight = case_when(
+         height <=1.9 ~ 'low',
+         height >=2.5 ~ 'high',
+           TRUE ~ 'medium'),) %>%
+  filter(fHeight == 'medium') %>% 
+  summarize(mean = mean(depth),  
+            sd = sd(depth))
+```

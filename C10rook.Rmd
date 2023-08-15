@@ -1,0 +1,353 @@
+# Binomial GLM for proportional data {#binprop-model10}
+
+Sometimes binomial data are expressed not as individual binary outcomes, but as proportions at a group or population level. For example, a species may comprise two discrete colour morphs, with different populations showing different proportions of one or other colour morph. In this case, we can analyse the data using a GLM with a binomial distribution. Thus with binary outcomes at the individual level, data are analysed with a Bernoulli GLM, as shown in Chapter 9. In contrast, if we focus on outcomes at the group level, we instead analyse the proportion of two possible outcomes.
+  
+## Rook intelligence 
+  
+Rooks (_Corvus frugilegus_) are charismatic social corvids with unusually high intelligence. Notably, they use tools in problem solving and captive rooks have been used in research on cognitive tasks. One task at which they are adept is in dropping stones into a water-filled tube, thereby raising the water level of the tube to gain access to a floating food reward. Here we analyse data from an experimental study in which a captive group of rooks were individually presented with this task in a series of trials. The success of each individual rook in trials was recorded, along with the age and sex of the individual The response variable is the number of successful outcomes, while sex, age and number of trials completed are covariates.  
+
+*__Load libraries__*
+
+```{r ch10_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(dplyr)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the read.csv function. 
+
+`rook <- read.csv(file = "rook.csv", header = TRUE, dec = ".", stringsAsFactors = TRUE,)`
+
+```{r ch10-import-rook, echo=FALSE, warning=FALSE, message=FALSE}
+rook <- read.csv(file = "rook.csv", 
+               header = TRUE, 
+                  dec = ".", 
+     stringsAsFactors = TRUE)
+```
+
+Start by inspecting dataframe `rook`:  
+
+```{r ch10-str-rook, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(rook, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises `r nrow(rook)` observations of `r ncol(rook)` variables. Each row in the dataframe represents a different captive rook used in a cognitive test. There are two categorical variables; `id` is a unique individual code (representing the colour rings on the left and right leg of each rook; i.e. BG is an individual with a blue ring on its left leg and a green ring on its right leg). In addition, there is a categorical factor `sex` with two levels, male or female. There are three continuous variables: `trials` is the number of cognitive tests undertaken by each subject, `success` is the number of tests in which the subject successfully completed the task, and `age` is the age of subjects in years.  
+
+## Six steps to fitting a GLM {#ch10-GLMsteps10}
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#rook-question}
+
+The aim of this study was to understand whether age (`age`) and sex (`sex`) play a role in determining the success of rooks in solving a novel cognitive task.
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt the 7 step-protocol to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers10}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. GLMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variable `sex` we use a boxplot to visualise how `success` varies for males and females.
+
+```{r ch10-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+Plot the categorical variable `sex`:  
+
+(ref:ch10-box-categorical) **Boxplot of cognitive task success by male and female rooks.**  
+
+```{r ch10-box-categorical, fig.cap='(ref:ch10-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+rook %>%
+  ggplot(aes(y = success, x = sex)) +
+  labs(y = "Successes", 
+       x = "Sex") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+```
+
+Fig. \@ref(fig:ch10-box-categorical) visualises the median and spread of the number of  successes of male and female rooks in a cognitive task, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a higher average number of rook oak forest than conifer and wetland forest. The size of the IQR and range of the data are similar for both, indicating homogeneity in the data and a lack of outliers. 
+
+To identify outliers for continuous variables we use multi-panel dotplots. 
+
+```{r ch10-order, message = FALSE, echo=FALSE, warning=FALSE}
+rook <- rook %>%
+  mutate(order = seq(1:nrow(rook)))
+```
+
+And identify those continuous variables we wish to plot (`depth`, and `herd`):  
+
+```{r ch10-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(rook, order, trials)
+p2 <- multi_dotplot(rook, order, success)
+p3 <- multi_dotplot(rook, order, age)
+```
+
+Finally, we use the `grid.arrange` function from the `gridExtra` package to arrange these plots:  
+
+(ref:ch10-dotplot1) **Dotplots of the continuous variables `depth` and `herd`. Data are arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch10-dotplot1, fig.cap='(ref:ch10-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+Fig. \@ref(fig:ch10-dotplot1) shows that one experimental subject completed only 8 trials, while the remainder completed either 11 or 12. While this datum appears as an outlier, we will use this variable in conjunction with the response variable `success` and it is unlikely to cause problems. The remaining variable `age` shows no outliers.
+  
+#### Distribution of the dependent variable {#bin-dist10}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise rook herd number with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+(ref:ch10-freqdens) **Density plot of rook counts for 39 surveyed herds.**
+  
+```{r ch10-freqdens, fig.cap='(ref:ch10-freqdens)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+  
+  rook %>% ggplot(aes(success)) +
+  geom_density() +
+  labs(x = "Success", y = "Frequency") +
+  My_theme
+```
+
+The density plot of the dependent variable (Fig. \@ref(fig:ch10-freqdens)) shows a distribution with a positively skewed distribution.
+  
+#### Balance of categorical variables {#bin-balance10}
+
+The balance of the categorical variable `sex` can be checked using the `table` function.
+
+```{r ch10-type-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(rook$sex)
+```
+
+The design of the study is well balanced with respect to the sex of test subjects.  
+  
+#### Zeros in the response variable {#bin-zeros10}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The percentage of zeros in the response variable can be calculated with:  
+
+```{r ch10-zeros, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(rook$success == 0) / nrow(rook))*100,0)
+```
+
+The response variable does not include any zeros.  
+
+#### Multicollinearity among covariates {#bin-collin10}  
+
+If covariates in a model are correlated, then there is a risk that the model may produce unstable parameter estimates with inflated standard errors. Here we examine the relationships among model covariates using the `ggpairs` command from the `GGally` library.  
+
+(ref:ch10-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, and frequency polygons.**  
+
+```{r ch10-ggpairs10, fig.cap='(ref:ch10-ggpairs10)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+rook %>% 
+    ggpairs(columns = c("sex", "trials", "age"), 
+         aes(colour = sex, alpha = 0.8), 
+              lower = list(combo = wrap("facethist")))
+```
+
+The plot matrix in Fig. \@ref(fig:ch10-ggpairs10) indicates no evidence of collinearity in the data.     
+
+#### Relationships among dependent and independent variables {#bin-rels10}
+
+Visual inspection of the data using plots will illustrate the nature of relationships among model covariates:
+
+(ref:ch10-scatter1) **Multipanel scatterplot of number of rook success in a novel cognitive task against age for males and females with a line of best fit plotted.**
+
+```{r ch10-scatter1, fig.cap='(ref:ch10-scatter1)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(rook, aes(x = age, y = success)) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, height = 0.5, width = 0.25) +
+  geom_smooth(formula = y ~ x, method = 'lm', 
+              colour = 'red', se = FALSE, linewidth = 1.5) +
+  My_theme +
+  xlab("Age (years)") + ylab("Successes") +
+  facet_grid(.~sex)
+```
+
+The plots in Fig. \@ref(fig:ch10-scatter1) shows a clear positive relationship between rook age and success in experimental trials, but without evidence for an interaction with sex.  
+
+#### Independence of response variable {#bin-indep10}  
+
+The variable `id` is an identifier for rooks used in the study. How many unique rooks were recorded?
+
+```{r ch10-unique, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+length(unique(rook$id))
+```
+And how many rows of data in the dataframe?
+
+```{r ch10-dim, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+dim(rook)
+```
+An assumption for a GLM is that each observation is independent of all others. For these data, just one record was collected for each rook in the study, suggesting independence. However, the analysis also assumes that each trial was independent; i.e. that rooks did not learn how to complete the task between successive trials, which is unlikely. This lack of independence among successive trials needs to be considered in drawing conclusions from the analysis.
+
+### Select and fit a statistical model {#bin-select10}
+
+The study was designed to model the performance of captive rooks in a cognitive test. There are several ways to fit this model. One is to calculate the proportion of successes by each rook, then to use a Gaussian LM to model the data. However, using this approach risks generating fitted values that fall below 0 or that exceed 1. An alternative is to apply a beta GLM to the proportion of successes (see Chapter 11), though this approach precludes using the model to predict the number of successes. The third solution is a binomial GLM for proportional data. In this case, the response variable is a dataframe comprising the number of successes and failures in completing the task of each rook.
+
+The binomial model will be fitted using the `glmmTMB` package. Start by calculating the number of failures (`failure`), then fit the model.
+
+```{r ch10-bin1, message=FALSE, echo=TRUE, warning=FALSE}
+rook$failure <- rook$trials - rook$success
+
+bin1 <- glmmTMB(cbind(success, failure) ~ age + sex,
+                                        data = rook,
+                                  family = binomial)
+```
+
+An alternative formulation of the same model, which gives the same outcome with glmmTMB, but not for all packages, is:
+
+```{r ch10-bin2, message=FALSE, echo=TRUE, warning=FALSE}
+rook$proportion <- rook$success / rook$trials
+
+bin2 <- glmmTMB(proportion ~ age + sex,
+                            data = rook,
+                         weights = trials,
+                          family = binomial)
+```
+
+
+### Conduct model checks  
+
+We conduct model checks using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values.
+
+```{r ch10-simRes1, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = bin1, plot = F)
+```
+
+Homogeneity of residual variance is assessed by plotting model residual variance against fitted values:   
+
+```{r ch10-plotRes1a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Next, plot model residuals against each covariate included in the model:  
+
+```{r ch10-plotRes1b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = rook$sex)
+plotResiduals(Res1, form = rook$age)
+```
+
+Is there a problem of non-linearity with age? Extract model residuals and then plot with a `loess` smoother:
+
+```{r ch10-plotRes1c, message=FALSE, echo=TRUE, warning=FALSE}
+rook$Res  <- resid(bin1)
+
+ggplot(rook, aes(x = age, y = (Res))) +
+  geom_jitter(shape = 16, size = 3, alpha = 0.6, 
+             height = 2, width = 2) +
+geom_smooth(formula = y ~ x, method = 'loess', 
+             colour = 'red', se = F, size = 1.5) +
+  My_theme +
+  xlab("Age (y)") + ylab("Residuals") +
+  facet_grid(.~sex)
+```
+
+There are no problems with the patterns of these residuals.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch10-plotQQbin1, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res1)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model.   
+  
+### Interpret and present model output  
+
+Obtain model output with:  
+
+```{r ch10-sumbin1, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(bin1)
+print(out, digits = 2, signif.stars=FALSE)
+```
+
+Table 10.1: **Mean estimates for the success of captive rooks in a cognitive task, modelled using a binomial GLM for proportional data.**
+
+|Model parameter  |Estimate|Z value |P value|
+|:----------------|:------:|:------:|:-----:|
+|Intercept        | -1.71  | -3.67  | <0.001|
+|Age              |  0.14  |  4.05  | <0.001|
+|Sex(Male)        |  0.01  |  0.04  |  0.971|
+
+The results (Table 10.1) show a statistically significant positive effect of age on the success of rooks in completing a cognitive task, but no significant difference between males and females.
+
+### Visualise the results  
+
+The final step to fitting a GLM is to visualise the model. We will plot model `bin1` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch10-final-plot) **Mean success of rook of captive rooks in a cognitive task, modelled using a binomial GLM for proportional data. Shaded areas are 95% confidence intervals. Points are observed data for different sampling sites.**  
+
+```{r ch10-final-plot, fig.cap='(ref:ch10-final-plot)', fig.align ='center', fig.dim = c(5,4), message=FALSE, echo=TRUE, warning=FALSE}
+set_theme(legend.pos = "top")
+plot_model(bin2, type = "eff", 
+                terms = c("age", "sex"),
+               colors = c("red","blue2"),
+            show.data = TRUE,
+                title = "", 
+           axis.title = c("Age (y)",
+       "Probability of success (%)"),
+                show.legend = T) + 
+  scale_x_continuous(limits = c(5, 20)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  My_theme
+```
+
+The results of this statistical analysis can be summarised as follows:  
+
+_A binomial GLM for proportional data was fitted to data on the success of a group of 18 captive rooks in conducting a cognitive task that involved dropping stones into a water filled tube, thereby raising the water level of the tube to gain access to a floating food reward. There was a statistically significant positive effect of age on successful completion of the task, but no effect of sex (Table 10.1), Fig. \@ref(fig:ch10-final-plot)._
+
+## Conclusions
+
+In this analysis we employed a binomial GLM for proportional data, which is an alternative to attempting to directly model the proportion of successes in a series of binomial trials. This approach measures outcomes at the group level, which contrasts with assessing binary outcomes at the individual level using a Bernoulli GLM (Chapter 9).
+
+  

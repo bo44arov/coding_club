@@ -1,0 +1,606 @@
+# Poisson GLM {#pois-model}
+
+A Poisson GLM is suitable for ecological data in which the response variable comprises count data, such as the number of individuals or species in a specific habitat. Data must not take values below zero and the variance is assumed approximately equal to the mean.
+
+## Stickleback lateral plate number {#stickleback}
+
+In this Chapter we fit a Poisson GLM to data on lateral plate number of three-spined sticklebacks (_Gasterosteus aculeatus_) from the island of North Uist in the Scottish Hebrides. Unlike most bony fishes, three-spined sticklebacks lack scales and instead possess a row of bony lateral plates along their body which, along with bony dorsal spines and pelvic girdle and pelvic spines represents ‘armour’ that serves to protect them from predatory birds and fish. Three-spined sticklebacks show variation in the development of their bony armour and have been the focus of numerous ecological and evolutionary studies. On North Uist, populations of three-spined sticklebacks exhibit extreme variation in the development of the lateral plates, spines and pelvis, including the complete loss of these skeletal structures. 
+
+Here we analyse data on lateral plate numbers for sticklebacks from 57 populations from North Uist, along with a range of ecological variables for each population, to understand what ecological processes drive variation in armour evolution.
+
+First, we load required libraries (see Section \@ref(functions)) and import the data (see Section \@ref(import)).
+
+*__Load libraries__*
+
+```{r ch5_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the read.csv function. 
+
+Data for North Uist three-spined sticklebacks are saved in the file 'stickle.csv' and are imported  into a dataframe in R using:  
+
+```{r ch5-import-ga, echo=TRUE, warning=FALSE, message=FALSE}
+ga <- read.csv(file = "stickle.csv", 
+             header = TRUE, 
+                dec = ".", 
+   stringsAsFactors = TRUE,)
+```
+
+Start by inspecting dataframe `ga`:
+
+```{r ch5-str-ga, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(ga, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises `r nrow(ga)` observations of `r ncol(ga)` variables. Each row in the dataframe represents a separate North Uist freshwater lake or _loch_ (`loch`). There are four continuous ecological variables: `dist` is the horizontal distance from each loch to the nearest marine habitat (in km), `alt` is the altitude of the loch above sea level (in m), `area` is the surface area of the loch (in km^2^), and `pH` is loch water pH. There are also three categorical ecological variables, scored as either 'yes' or 'no': `comp` is the presence in a loch of nine-spined sticklebacks (_Pungitius pungitius_), which are competitors of three-spined sticklebacks, `inve` is the presence of invertebrate predators of three-spined sticklebacks (primarily dragonfly and beetle larvae), and `vert` is the presence of vertebrate predators of three-spined sticklebacks (brown trout, _Salmo trutta_). Two further variables are `sl`, which is the mean body length of three-spined sticklebacks from a sample of 30 fish from each loch, and `plate` is the median plate number of the same 30 fish.
+
+Let's check for missing data.
+
+```{r ch5-NAs, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+colSums(is.na(ga))
+```
+
+## Six steps to fitting a GLM {#GLMsteps5}
+
+We will adopt our six-step protocol to fitting a GLM. These are:
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#ga-question}
+
+This study was conducted to understand variation in lateral plate number of three-spined sticklebacks among freshwater lochs on North Uist. The topic of lateral plate evolution has been the subject of many studies over several decades, and so there are multiple hypotheses that we might investigate with these data; indeed all the ecological variables measured have previously been invoked as predictors of lateral plate evolution in three-spined sticklebacks. 
+
+This multiplicity of existing research presents us with the opportunity to compare among previous hypotheses and examine which is best supported by our data. This approach to hypothesis testing is termed an ‘information theory (IT) approach’ and is fundamentally Bayesian, since we take prior information and update it with new data to draw the most parsimonious conclusion.
+
+We start by formulating a set of biologically plausible alternative models comprising variables proposed as environmental agents of selection on lateral plate number in previous studies (Table 5.1).
+
+Table 5.1: **_A priori_ models for the evolution of lateral plates of three-spined sticklebacks (_Gasterosteus aculeatus_) in freshwater lochs on North Uist, Scotland.**
+
+|Model|Formulation    |Source                     |
+|:----|:--------------|:--------------------------|
+|M01  |`vert`         |Hoogland _et al._ (1956)   |
+|M02  |`ph`           |Giles 1983                 |
+|M03  |`inve`         |Reimchen (1994)            |
+|M04  |`alt` + `dist` |Raeymaekers _et al._ (2007)|
+|M05  |`alt` + `area` |Lucek _et al._ (2016)      |
+|M06  |`comp`         |MacColl _et al._ (2013)    |
+|M07  |`vert` + `ph`  |Spence _et al._ (2013)     |
+|M08  |`vert` + `comp`|Magalhaes _et al._ (2016)  |
+|M09  |`dist` + `sl`  |Smith _et al._ (2022)      |
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt a modified version of the protocol proposed by Zuur _et al_. (2010) for conducting data exploration. This protocol comprises 7 steps and is intended to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers5}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. GLMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variables `comp`, `inve` and `vert` we use a boxplot to visualise how `plate` varies with each.
+
+```{r ch5-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color = "white"), text = element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+```
+
+(ref:ch5-box-categorical) **Boxplots of number of lateral plates of three-spined sticklebacks from lochs with and without: A. Competitors, B. Invertebrate predators, C. Vertebrate predators.**  
+
+```{r ch5-box-categorical, fig.cap='(ref:ch5-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+b1 <- ga %>%
+  ggplot(aes(y = plate, x = comp)) +
+  labs(y = "Number of lateral plates", 
+       x = "Competitors") +
+  ggtitle("A") +
+  geom_boxplot(fill = "gray") +
+  My_theme
+
+b2 <- ga %>%
+  ggplot(aes(y = plate, x = inve)) +
+  labs(y = "", 
+       x = "Invert predators") +
+  ggtitle("B") +
+  geom_boxplot(fill = "gray") +
+  My_theme
+
+b3 <- ga %>%
+  ggplot(aes(y = plate, x = vert)) +
+  labs(y = "", 
+       x = "Vert predators") +
+  ggtitle("C") +
+  geom_boxplot(fill = "gray") +
+  My_theme
+
+grid.arrange(b1, b2, b3, nrow = 1)
+```
+
+Fig. \@ref(fig:ch5-box-categorical) visualises the median and spread of stickleback lateral plate number, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplots shows that there was a higher average lateral plate number in loch with competitors and without vertebrate predators, while there was no difference in fish from sites with and without invertebrate predators. The size of the IQR and range of the data are similar for all three variables, indicating homogeneity in the data and a lack of outliers.  
+
+To identify outliers for continuous variables we use multi-panel dotplots.
+
+```{r ch5-dot-function, message = FALSE, echo=FALSE, warning=FALSE}
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+```{r ch5-order, message = FALSE, echo=FALSE, warning=FALSE}
+ga <- ga %>%
+  mutate(order = seq(1:nrow(ga)))
+```
+
+Identify the continuous variables we wish to plot (`dist`,`alt`,`area`,`ph`,`sl`, and `plate`):  
+
+```{r ch5-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(ga, order, dist) 
+p2 <- multi_dotplot(ga, order, alt) 
+p3 <- multi_dotplot(ga, order, area) 
+p4 <- multi_dotplot(ga, order, ph) 
+p5 <- multi_dotplot(ga, order, sl) 
+p6 <- multi_dotplot(ga, order, plate) 
+```
+
+Use the `grid.arrange` function from the `gridExtra` package to arrange these plots in our preferred layout:  
+
+(ref:ch5-dotplot1) **Dotplots of the continuous variables `dist`, `alt`, `area`, `ph`, `sl`, `plate`. Data are arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch5-dotplot1, fig.cap='(ref:ch5-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 2)
+```
+
+There are no obvious outliers in Fig. \@ref(fig:ch5-dotplot1). However, the distribution of data for loch area is clumped, indicating a large number of small lochs and a few much larger lochs. To improve the distribution of these data we can conduct a transformation of the covariate. While transformation of the response variable is to be avoided, transformation of covariates can serve to facilitate model fitting. Here we apply a log~10~ transformation:
+
+```{r ch5-logtrans, fig.cap='(ref:ch5-logtrans)', message = FALSE, echo=TRUE, warning=FALSE}
+ga$log_area <- log10((ga$area))
+```
+
+Compare the untransformed variable with the transformed:
+
+(ref:ch5-logarea) **Dotplots of loch surface area (area) and log~10~ surface area (log_area) on North Uist. Data are arranged by the order they appear in the dataframe.**
+
+```{r ch5-logarea, fig.cap='(ref:ch5-logarea)', fig.dim = c(5, 3), fig.align='center', cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+p7 <- multi_dotplot(ga, order, log_area)
+grid.arrange(p3, p7, nrow = 1)
+```
+
+#### Distribution of the dependent variable {#pois-dist}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise stickleback lateral plate number by dividing the x-axis into 'bins' and counting the number of observations in each bin as a frequency polygon using the `geom_freqpoly()` function from the `ggplot2` package:
+
+(ref:ch5-freqpoly) **Frequency polygon of mean lateral plate number of three-spined sticklebacks from 57 North Uist lochs.**
+
+```{r ch5-freqpoly, fig.cap='(ref:ch5-freqpoly)', fig.dim = c(6, 4), fig.align='center', cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+ga %>% 
+  ggplot(aes(plate)) +
+  geom_freqpoly(bins = 9) +
+  labs(x="Lateral plates",y="Frequency") +
+  My_theme
+```
+
+The frequency polygon plot of the dependent variable (Fig. \@ref(fig:ch5-freqpoly)) shows a distribution with a pronounced positive skew. 
+
+#### Balance of categorical variables {#pois-balance}
+
+The balance of the three categorical ecological variables; `comp` (the presence in a loch of nine-spined sticklebacks, which are competitors of three-spined sticklebacks), `inve` (the presence of invertebrate predators), and `vert` (the presence of vertebrate predators), can be checked using the `table` function
+
+Competitors present in loch?  
+
+```{r ch5-tab-comp, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(ga$comp)
+```
+
+Invertebrate predators present in loch?  
+
+```{r ch5-tab-inve, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(ga$inve)
+```
+
+Vertebrate predators present in loch?  
+
+```{r ch5-tab-vert, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(ga$vert)
+```
+
+Balance is not perfect, though for `comp` and `inve` it is acceptable. For `vert` it is more problematic should we attempt to include this variable in a complex model with multiple other variables, and especially as an interaction. However, boxplots of these variables (Fig. \@ref(fig:ch5-box-categorical)) showed no striking differences in variance. Consequently, the imbalance in sample sizes for these three factors is unlikely to cause problems.  
+
+#### Zeros in the response variable {#pois-zeros}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The proportion of zeros in the response variable can be calculated with:
+
+```{r ch5-zeros, echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(ga$plate == 0) / nrow(ga))*100,0)
+```
+
+The response variable comprises 10% zeros. This proportion of zeros is not necessarily a problem, but is a consideration in deciding how to model the data.  
+
+#### Multicollinearity among covariates {#pois-collin}
+
+If covariates in a model are correlated, then the model may produce unstable parameter estimates with inflated standard errors and it is important to carefully check relationships among covariates.
+
+A comprehensive summary of the relationships among model covariates can be obtained using the `ggpairs` function from the `GGally` library:
+
+(ref:ch5-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, scatterplots, frequency polygons, and pairwise correlations.**
+
+```{r ch5-ggpairs, fig.cap='(ref:ch5-ggpairs)', fig.dim = c(7, 5), fig.align='center', echo=TRUE, warning=FALSE, message=FALSE}
+ga %>% 
+    ggpairs(columns = c("dist","alt","log_area","ph","sl",  
+                        "comp","inve","vert"))
+```
+
+The plot matrix in Fig. \@ref(fig:ch5-ggpairs) demonstrates collinearity between loch pH (`ph`) and mean fish standard length (`sl`). Let's explore this relationship further. 
+
+The variance inflation factor (VIF) provides an estimate of the proportion of variance in one predictor explained by the other predictors in a model. A VIF of 1 indicates no collinearity. VIF values above 1 indicate increasing degrees of collinearity. VIF values exceeding 3 are considered problematic (Zuur _et al._ 2010). The VIF can be estimated using the `vif` function from the `car` package:
+
+```{r ch5-vif, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round(vif(glm(plate ~ ph + sl,  
+                      family = "poisson",  
+                      data = ga)),2)
+```
+
+The estimates of VIF are <3, so there is no serious problem with multicollinearity with these two variables.  
+
+#### Relationships among dependent and independent variables {#pois-rels}
+
+Visual inspection of the data using plots is a critical step and will illustrate whether relationships are linear or non-linear and whether there are interactions between covariates. Start by plotting plate number (the response variable) against the continuous covariates, R code is available in the R script associated with this chapter:
+
+(ref:ch5-scatter) **Multipanel scatterplots of median three-spined stickleback lateral plate number against continuous covariates.**
+
+```{r ch5-scatter, fig.cap='(ref:ch5-scatter)', fig.dim = c(5, 4), fig.align='center', message = FALSE, echo = TRUE, warning = FALSE}
+
+p7 <- ga %>% 
+  ggplot() +
+  geom_point(aes(x = dist, y = plate), alpha = 0.5) +
+  geom_smooth(aes(x = dist, y = plate), method = 'lm', 
+                 se = FALSE, colour = "black")+
+  labs(x = "Distance (km)", y = "Plate number") +
+  My_theme
+
+p8 <- ga %>% 
+  ggplot() +
+  geom_point(aes(x = alt, y = plate), alpha = 0.5) +
+  geom_smooth(aes(x = alt, y = plate), method = 'lm',  
+                 se = FALSE, colour = "black")+
+  labs(x = "Altitude (m)", y = "") +
+  My_theme
+
+p9 <- ga %>% 
+  ggplot() +
+  geom_point(aes(x = ph, y = plate), alpha = 0.5) +
+  geom_smooth(aes(x = ph, y = plate), method = 'lm',  
+                 se = FALSE, colour = "black")+
+  labs(x = "pH", y = "Plate number") +
+  My_theme
+
+p10 <- ga %>% 
+  ggplot() +
+  geom_point(aes(x = sl, y = plate), alpha = 0.5) +
+  geom_smooth(aes(x = sl, y = plate), method = 'lm',  
+              se = FALSE, colour = "black") +
+  labs(x = "SL (mm)", y = "") +
+  My_theme
+
+grid.arrange(p7, p8, p9, p10, nrow = 2)
+```
+
+The plots shown in Fig. \@ref(fig:ch5-scatter) suggest positive (`pH`, `SL`) and negative (`dist`, `alt`) relationships with plate number. This is not surprising, given that we are using an IT approach and fitting a series of models with variables previously proposed as predictors of plate number (Table 5.1). The question we are addressing in this study is not whether these relationships exist, but instead which model (i.e. hypothesis) is best supported by the data.
+
+For categorical covariates:
+
+(ref:ch5-cat-vars) **Boxplots of median three-spined stickleback lateral plate number as a function of the presence/absence of a competitor species, invertebrate predators and vertebrate predators.**
+
+```{r ch5-cat-vars, fig.cap='(ref:ch5-cat-vars)', fig.align='center', fig.dim = c(5, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+label_inve <- c("no" = "No invert", "yes" = "Invert ")
+label_vert <- c("no" = "No vert ", "yes" = "Vert")
+ggplot() +
+geom_boxplot(data = ga, aes(y = plate, x = comp)) +  
+ geom_jitter(data = ga, aes(y = plate, x = comp),  
+             size = 2, width = 0.05, height = 0.1) +  
+xlab("Competitors") + ylab("Plate number") +  
+My_theme +  
+theme(strip.text = element_text(size = 10)) +  
+facet_grid(vert ~ inve,  
+           scales = "fixed", space = "fixed",  
+         labeller = labeller (vert = label_vert,  
+                              inve = label_inve))
+```
+
+The plots shown in Fig. \@ref(fig:ch5-cat-vars) suggest variation in lateral plate number as a function of the presence of predators and competitors. Again, however, in the context of an IT approach, these patterns are expected and the question is which _a priori_ models are best supported by the data.
+
+#### Independence of response variable {#pois-indep}
+
+An assumption of a GLM is that each observation in a dataset is independent of all others. In the case of the present study each row of data represented a discrete freshwater loch supporting a different three-spined stickleback population. Ostensibly then, these data are independent. However, there is the potential for spatial dependency in these data. North Uist shows striking environmental spatial heterogeneity with the West coast of the island is characterised by a band of calcium-rich shell-sand grassland, termed the _machair_, while in the central and eastern regions the _machair_ gives way to blanket peat bogs with acidic lochs. A GLM does not permit spatial (or temporal) dependency to be adequately modelled and so, for the purposes of this analysis, while we will treat the data as independent, though this may not strictly be the case. 
+
+### Select and fit a statistical model {#pois-select}
+
+The study was designed to compare alternative hypotheses for the evolution of lateral plate number in three-spined sticklebacks. The dependent variable comprises lateral plate counts that include zero, though negative values are not possible. The distribution of the response variable is positively skewed (Fig. \@ref(fig:ch5-freqpoly)). The data will treated as independent, though given the structure of the environment on North Uist, there may be spatial dependency in the data.
+
+Given these conditions, a Poisson is an appropriate distribution as a starting point to model the data, in combination with a log link function. The Poisson is a non-normal distribution that is effective for modelling strictly positive integer data (such as counts). It has a single parameter (lambda, $\lambda$), which is both the mean and variance of the response variable. Sometimes you might see mu ($\mu$) used to represent the mean. The variance in the Poisson distribution is proportional to the mean, so that larger mean values have greater variation associated with them.
+
+The link function is used to link the response variable (counts of lateral plates) and the predictor function (covariates). In the case of a Poisson GLM the default is a log link function. The link function is needed to ensure model fitted values remain positive, while allowing zeros in the data. 
+
+We have a set of nine _a priori_ models (Table 5.1) that represent alternative hypotheses for the environmental variables that drive three-spined stickleback lateral plate evolution. We will fit all nine models and then compare them using the Akaike Information Criterion (AIC). AIC works by evaluating each model’s fit to the data and adding a penalty term for the complexity of each model. AIC uses the maximum likelihood estimation (log-likelihood) of a model as a measure of fit. The model with the maximum likelihood is the one that best fits the data. The AIC is low for models with high log-likelihoods, so the lowest AIC score represents the best trade-off between model fit and complexity.
+
+We start by specifying the model formulae:
+
+```{r ch5-formulae-models, cache = TRUE,  message = FALSE, echo=TRUE, warning=FALSE}
+f01 <- plate ~ vert
+f02 <- plate ~ ph 
+f03 <- plate ~ inve
+f04 <- plate ~ alt + dist 
+f05 <- plate ~ alt + log_area 
+f06 <- plate ~ comp 
+f07 <- plate ~ vert + ph 
+f08 <- plate ~ vert + comp
+f09 <- plate ~ dist + sl
+```
+
+Then run the nine models (Pois1-9):
+
+```{r ch5-fit-models, cache = TRUE,  message = FALSE, echo=TRUE, warning=FALSE}
+Pois1 <- glmmTMB(f01, family=poisson(link=log), data=ga)
+Pois2 <- glmmTMB(f02, family=poisson(link=log), data=ga)
+Pois3 <- glmmTMB(f03, family=poisson(link=log), data=ga)
+Pois4 <- glmmTMB(f04, family=poisson(link=log), data=ga)
+Pois5 <- glmmTMB(f05, family=poisson(link=log), data=ga)
+Pois6 <- glmmTMB(f06, family=poisson(link=log), data=ga)
+Pois7 <- glmmTMB(f07, family=poisson(link=log), data=ga)
+Pois8 <- glmmTMB(f08, family=poisson(link=log), data=ga)
+Pois9 <- glmmTMB(f09, family=poisson(link=log), data=ga)
+```
+
+And extract AIC scores for each model using the `aictab` function from the `AICcmodavg` package:
+
+```{r ch5-AIC, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+models <- list(Pois1,Pois2,Pois3,Pois4,Pois5,
+               Pois6,Pois7,Pois8,Pois9)
+names(models)<-c(
+  "Pois1","Pois2","Pois3","Pois4","Pois5",  
+  "Pois6","Pois7","Pois8","Pois9")
+print(aictab(cand.set = models, sort = T, digits = 2))
+```
+Table 5.2: **Ranking of _a priori_ models based on Akaike Information Criterion (AIC) score. _K_: The number of parameters in the model. _AICc_: The AIC value of the model. ‘c’ indicates the AIC has been corrected for small sample sizes. _Delta_AICc_: The difference between the best model compared to the current model. _AICcWt_: The proportion of the total predictive power found in the model. _Cum.Wt_: The cumulative sum of the AIC weights. _LL_: The log-likelihood of the model.**  
+
+In this case model `Pois9` is the most probable, though model `Pois2` gives an almost equally good fit as does `Pois7`.
+
+### Conduct model checks
+
+Start by using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values to ensure the model is not misspecified. We start with `Pois9`.
+
+```{r ch5-simRes9, message=FALSE, echo=TRUE, warning=FALSE}
+Res9 <- simulateResiduals(fittedModel = Pois9, plot = F)
+```
+
+Homogeneity of residual variance can be assessed by plotting model residual variance against fitted values:
+
+```{r ch5-plotRes9a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res9)
+```
+
+There is no problem with residuals plotted against model fitted values.
+
+Also plot model residuals against each covariate in the model separately:
+
+```{r ch5-plotRes9b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res9, form = ga$dist)
+plotResiduals(Res9, form = ga$sl)
+```
+
+There is also no problem with the pattern of these residuals.
+
+Check normality of residuals, dispersion and presence of outliers:
+
+```{r ch5-plotQQ9, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res9)
+```
+
+There is no problem with normality of residuals or outliers, but for dispersion the model is close to the significance threshold of P <0.05. Is the model over- or underdispersed?  
+
+Poisson GLMs assume that the mean and variance of the response variable vary at the same rate. This assumption must be confirmed. Overdispersion means that a Poisson distribution does not adequately model the variance (i.e. the variance exceeds the mean) and is not appropriate for the model. Underdispersion is less common, and arises from too little variation in the data (i.e. the variance is smaller than the mean). Underdispersion can be caused by model over-fitting, but is also seen in data sets with small sample values. Underdispersion is also associated with a lack of independence in the data.
+
+```{r ch5-overdis9, message=FALSE, echo=TRUE, warning=FALSE}
+check_overdispersion(Pois9)
+```
+The problem is underdispersion, and likely a result of low values for lateral plate number, but may also be a consequence of _spatial dependency_ in these data.
+
+What can we do? Options are to fit a generalised Poisson (GP) regression model or a Conway–Maxwell–Poisson (COM–Poisson) model (among others). Both can be readily fitted using `glmmTMB`. In **Chapter 7** we will use a GP–Poisson for underdispersed data. For now, we will accept that the model `Pois9` is slightly underdispersed and continue with model interpretation and visualisation. Is this the right thing to do? We believe not, but we also know that the proper solution to the underdispersion in these data is to fit a **_spatial model_**, which is beyond the scope of this book.
+
+One final step in model validation is to ensure there is no zero-inflation in the model. The `testZeroInflation` function compares the observed number of zeros in the data with the number of zeros expected from simulations.
+
+```{r ch5-zeroinf9, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow=c(1,1), mar=c(2,2,4,2), cex.lab = 1)
+testZeroInflation(Res9)
+```
+
+Simulated (gray bars) and observed zeros (red line) match, indicating no problem zero-inflation in the data.  
+
+We can now conduct the same model checks for **`Pois2`.**  
+
+Start by simulating scaled residuals from the fitted model.  
+
+```{r ch5-simRes2, message=FALSE, echo=TRUE, warning=FALSE}
+Res2 <- simulateResiduals(fittedModel = Pois2, plot = F)
+```
+
+Homogeneity of residual variance can be assessed by plotting model residual variance against fitted values:
+
+```{r ch5-plotRes2a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res2)
+```
+There is a problem with residuals plotted against model fitted values.
+
+Also plot model residuals against each covariate in the model separately:
+
+```{r ch5-plotRes2b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res2, form = ga$ph)
+```
+
+There is also a problem with the pattern of these residuals.  
+
+Finally, check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch5-plotQQ2, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res2)
+```
+
+There is no problem with normality of residuals, presence pf outliers, or dispersion of the model.  
+
+```{r ch5-overdis2, message=FALSE, echo=TRUE, warning=FALSE}
+check_overdispersion(Pois2)
+```
+The model is slightly underdispersed.  
+
+Finally, we examine the model for zero-inflation using the `testZeroInflation` function to compare the observed number of zeros in the data with the number of zeros expected from simulations.  
+
+```{r ch5-zeroinf2, message=FALSE, echo=TRUE, warning=FALSE}
+testZeroInflation(Res2)  
+```
+
+Simulated (gray bars) and observed zeros (red line) match, indicating no problem zero-inflation in the data.  
+
+Model validation for `Pois2` (and `Pois7`; not shown here) indicate the model is misspecified.  
+
+Should we consider **model selection** of `Pois9`? We adopted an information theoretic (IT) approach in this analysis, fitting nine biologically plausible alternative _a priori_ models. We assessed model fit using AIC and identified models `Pois9` as the most probable that was not misfit.  
+
+Given the approach we have used, there is no justification for undergoing further model selection. However, an exception might be in the present case in which two models are equally probable. An option we might consider is a model averaging procedure to arrive at an optimum model (i.e. combining variables from both models). Alternatively, we might simply present results for both models. In the present case, we only interpret and present the results for `Pois9` since both alternative models were misfit.  
+
+Note that this result does not preclude the possibility that another, untested, _a priori_ model could not provide an even better fit to the data. However, finding an optimal model was not the goal of this analysis. Rather, we wished to examine the performance of a set of published models (i.e. hypotheses) of stickleback lateral plate evolution.  
+
+### Interpret and present model output  
+
+Specification of the Poisson GLM using mathematical notation takes the form:  
+
+_$Plate_i$ ~ Poisson($\mu_i$)_   
+_E($Plate_i$) = $\mu_i$_   and   _var($Plate_i$) = $\mu_i$_    
+_log($\mu_i$) = $\eta_i$_  
+_$\eta_i$ = $\beta_1$ + $\beta_2$ x $Distance_i$ + $\beta_3$ x $Length_i$_   
+
+  
+Where $Plate_i$ is the median number of lateral bony plates of three-spined stickleback population _i_ assuming a Poisson distribution with mean and variance $\mu_i$. $Distance_i$ is a continuous covariate representing the distance of loch _i_ to the sea and $Length_i$ is a continuous covariate representing mean standard length of the stickleback population in loch _i_. The numerical output for the model is obtained with:  
+
+```{r ch5-sumPois9, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(Pois9)
+print(out, digits = 3, signif.stars=FALSE)
+```
+Table 5.2: **Mean estimates for lateral plate number of three-spined stickleback populations on North Uist as a function of distance of populations to the sea (in km) and mean population standard length (mm) modelled using a Poisson GLM.**  
+
+|Model parameter|Estimate|Z value|P value|
+|:--------------|:------:|:-----:|:-----:|
+|Intercept      |-1.61   |-3.30  | <0.001|
+|Distance to sea|-0.30   |-2.27  |  0.023|
+|Standard length| 0.09   | 6.56  | <0.001|
+
+These results show a statistically significant negative effect of distance to the sea on stickleback plate number ( P = 0.023) and a highly significant positive effect of mean population standard length (P <0.001).  
+
+### Visualise the results  
+
+The final step to fitting a GLM is to visualise the model. We can plot model `Pois9` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch5-plotPois9) **Mean lateral plate number of three-spined stickleback populations on North Uist as a function of: A. distance of the population to the sea (km); B. mean population standard length (mm), modelled using a Poisson GLM. Shaded areas are 95% confidence intervals. Points are observed data for different stickleback populations. **  
+
+```{r ch5-plotPois9, fig.cap='(ref:ch5-plotPois9)', fig.align ='center', fig.dim = c(5,4), message=FALSE, echo=TRUE, warning=FALSE}
+figA <- plot_model(Pois9, type = "eff", 
+           terms = c("dist"),
+           show.data = TRUE,
+           colors = c("mediumblue"),
+           axis.lim = c(0,17),
+           jitter = 0.2,
+           title = "A", 
+           axis.title = c("Distance to sea (km)",
+                          "Number of lateral plates"),
+           show.legend = FALSE) + My_theme
+
+figB <- plot_model(Pois9, type = "eff", 
+                   terms = c("sl"),
+                  colors = c("red2"),
+                   jitter = 0.2,
+                   axis.lim = c(0,17),
+                   show.data = TRUE,
+                   title = "B", 
+                   axis.title = c("Mean SL (mm)",
+                                  ""),
+                   show.legend = FALSE) + My_theme
+
+ggarrange(figA, 
+          figB,
+          ncol = 2, 
+          nrow = 1)
+
+```
+
+The results of this statistical analysis can be summarised as follows: 
+
+_A  Poisson GLM was fitted to data for lateral plate counts of three-spined sticklebacks from 60 populations on North Uist, Scotland. An information theory approach was adopted for model fitting, with nine alternative models formulated that comprised variables proposed as having importance as environmental agents of selection on lateral plate number in previously published studies (Table 5.1, Fig. \@ref(fig:ch5-plotPois9)). In the best-fitting model there was a statistically significant negative effect of distance of a loch to the sea (in km) (P = 0.023) and a highly significant positive effect of mean population standard length (in mm) (P <0.001) (Table 5.2, Fig. \@ref(fig:ch5-plotPois9))._  
+<br>  
+<br>  
+**References**
+
+Giles, N. 1983. The possible role of environmental calcium levels during the evolution of phenotypic diversity in Outer Hebridean populations of the three‐spined stickleback. _Journal of Zoology_ 199, 535-544.
+
+Hoogland, R., Morris, D. and Tinbergen, N. 1956. The spines of sticklebacks (_Gasterosteus_ and _Pygosteus_) as means of defence against predators (_Perca_ and _Esox_). _Behaviour_ 10, 205-236.
+
+Lucek, K., Kristjánsson, B.K., Skúlason, S. and Seehausen, O. 2016. Ecosystem size matters: the dimensionality of intralacustrine diversification in Icelandic stickleback is predicted by lake size. _Ecology and Evolution_ 6, 5256-5272.
+
+MacColl, A.D., Nagar, A.E. and de Roij, J. 2013. The evolutionary ecology of dwarfism in three‐spined sticklebacks. _Journal of Animal Ecology_ 82, 642-652.
+
+Magalhaes, I.S., D'Agostino, D., Hohenlohe, P.A. and MacColl, A.D. 2016. The ecology of an adaptive radiation of three‐spined stickleback from North Uist, Scotland. _Molecular Ecology_ 25, 4319-4336.
+
+Raeymaekers, J.A., Van Houdt, J.K., Larmuseau, M.H., Geldof, S. and Volckaert, F.A. 2007. Divergent selection as revealed by PST and QTL‐based FST in three‐spined stickleback (_Gasterosteus aculeatus_) populations along a coastal‐inland gradient. _Molecular Ecology_ 16, 891-905.
+
+Reimchen, T.E. 1994. Predators and evolution in threespine stickleback. Pp. 240-273 in M. A. Bell and S. A. Foster, eds. _The Evolutionary Biology of the Threespine Stickleback_. Oxford University Press.
+
+Smith, C., Zięba, G., Spence, R. and Przybylski, M., 2022. Spatial heterogeneity in pH, body size and habitat size generates ecological opportunity in an evolutionary radiation. _Journal of Fish Biology_ 101, 1501-1508.
+
+Spence, R., Wootton, R.J., Barber, I., Przybylski, M. and Smith, C. 2013. Ecological causes of morphological evolution in the threespine stickleback. _Ecology and Evolution_ 3, 1717-1726.
+
+Zuur, A.F., Ieno, E.N. and Elphick, C.S., 2010. A protocol for data exploration to avoid common statistical problems. _Methods in Ecology and Evolution_ 1, 3-14.  
+ 
+
+
+

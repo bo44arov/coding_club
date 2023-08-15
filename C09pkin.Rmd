@@ -1,0 +1,328 @@
+# Bernoulli GLM {#bern-model9}
+
+A Bernoulli distribution is a discrete distribution for dealing with data with two possible outcomes such as success or failure and presence or absence. The Bernoulli GLM is for strictly binary data and is sometimes called a logistic GLM (or just "logistic regression"). In ecological studies a Bernoulli GLM is  a useful tool for modelling presence/absence data.
+  
+## The presence of red spots on pumpkinseed fish 
+  
+In the pumpkinseed fish (_Lepomis gibbosus_) some individuals have a conspicuous red spot on their gill cover (operculum) that has been associated with behavioural dominance. Zięba _et al_. (2018) investigated the function of the red spot in populations of pumpkinseed collected from sites across Europe where the species is invasive.  
+
+The aim of the study was to determine whether the presence of the red operculum spot functions as a signal of sex in pumpkinseed and to do this a model was fitted to test whether the probability of possessing a red spot differed between the sexes. The _a priori_ prediction was that males would be more likely to express a red operculum spot than females. However, because larger fish tend to be older, the analysis needed to control for body size while simultaneously comparing the probability of red spots among individuals of different sexes.
+
+*__Load libraries__*
+
+```{r ch9_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(dplyr)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the read.csv function.  
+
+```{r ch9-import-pkin, echo=TRUE, warning=FALSE, message=FALSE}
+pkin <- read.csv(file = "pkin.csv", 
+               header = TRUE, 
+                  dec = ".", 
+     stringsAsFactors = TRUE,)
+```
+
+Start by inspecting dataframe `pkin`:  
+
+```{r ch9-str-pkin, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(pkin, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises 900 observations of 5 variables. Each row in the dataframe represents an individual pumpkinseed fish collected from a different population. Population (`pop`) and sex (`sex`) are both factors; i.e. categorical variables. Fish weight (`wt`), and length (`sl`) are continuous covariates. The presence of a red spot (`spot`) is binomial; individuals either possess a red spot or they do not, and the data are coded as 0 (red operculum spot absent) and 1 (red spot present).
+
+## Six steps to fitting a GLM {#ch9-GLMsteps9}
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#pkin-question9}
+
+The aim of this study was to understand whether pumpkinseed size (`wt` and `sl`) and sex (`sex`) play a role in determining the probability of an individual possessing a red operculum spot.  
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt the 7 step-protocol to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers9}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. GLMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variable `sex` we use a boxplot to visualise how `spot` varies for males and females.
+
+```{r ch9-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+Plot the categorical variable `sex`:  
+
+(ref:ch9-box-categorical) **Boxplot of presence of red operculum spots in male and female pumpkinseed.**  
+
+```{r ch9-box-categorical, fig.cap='(ref:ch9-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+pkin %>%
+  ggplot(aes(y = spot, x = sex)) +
+  labs(y = "Presence of red spot", 
+       x = "Sex") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+```
+
+Fig. \@ref(fig:ch9-box-categorical) visualises the median and spread of the number of  successes of male and female pkins in a cognitive task, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a higher probabiliuty of male pumpkinseed possessing red spots than females. 
+
+To identify outliers for continuous variables we use multi-panel dotplots.
+
+```{r ch9-order, message = FALSE, echo=FALSE, warning=FALSE}
+pkin <- pkin %>%
+  mutate(order = seq(1:nrow(pkin)))
+```
+
+And identify those continuous variables we wish to plot (`depth`, and `herd`), then plot:  
+
+```{r ch9-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(pkin, order, wt)
+p2 <- multi_dotplot(pkin, order, sl)
+p3 <- multi_dotplot(pkin, order, spot)
+```
+
+We use the `grid.arrange` function from the `gridExtra` package to arrange these plots in our preferred layout:  
+
+(ref:ch9-dotplot1) **dotplots of pumpkinseed weight (wt), standard length (sl) and presence of red operculum spots (spot) arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch9-dotplot1, fig.cap='(ref:ch9-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+Fig. \@ref(fig:ch9-dotplot1) showing dotplots of pumpkinseed weight (`wt`), standard length (`sl`) and presence of red operculum spots (`spot`) shows no evidenve of outliers. 
+  
+#### Distribution of the dependent variable {#bern-dist9}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise the presence of red operculum spots with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+(ref:ch9-freqdens) **Density plot of the presence of red operculum spots for 900 pumpkinseed fish.**
+  
+```{r ch9-freqdens, fig.cap='(ref:ch9-freqdens)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+  pkin %>% ggplot(aes(spot)) +
+  geom_density() +
+  labs(x = "Presence of red operculum spot", 
+       y = "Frequency") +
+  My_theme
+```
+
+The density plot of the dependent variable (Fig. \@ref(fig:ch9-freqdens)) shows a bimodal distribution, reflecting the fact that this variable is strictly binomial.
+  
+#### Balance of categorical variables {#bern-balance9}
+
+The balance of the categorical variable `sex` can be checked using the `table` function.
+
+```{r ch9-type-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(pkin$sex)
+```
+
+The design of the study is well balanced with respect to the sex.  
+  
+#### Zeros in the response variable {#bern-zeros9}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The percentage of zeros in the response variable can be calculated with:  
+
+```{r ch9-zeros, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(pkin$spot == 0) / nrow(pkin))*100,0)
+```
+
+That is 62% of fish without a red operculum spot. Note though that the model to be fitted is binomial and is expected to contain a large number of zeros, so the high proportion of zeros should not be a problem.
+
+#### Multicollinearity among covariates {#bern-collin9}  
+
+Here we examine the relationships among model covariates using the `ggpairs` command from the `GGally` library.  
+
+(ref:ch9-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, and frequency polygons.**  
+
+```{r ch9-ggpairs, fig.cap='(ref:ch9-ggpairs)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+pkin %>% 
+    ggpairs(columns = c("sex", "wt", "sl"), 
+         aes(colour = sex, alpha = 0.8),
+              lower = list(combo = wrap("facethist")))
+```
+
+The plot matrix in Fig. \@ref(fig:ch9-ggpairs) indicates that the measures of fish size (`wt` and `sl`) are highly correlated. As such, we will drop one of these variables from our model, but which should we drop? In our experience, it is easier to measure fish length more accurately that fish weight, especially for live fish. In this case, we will use `sl` in the model and drop `wt`.   
+
+#### Relationships among dependent and independent variables {#bern-rels9}
+
+Visual inspection of the data using plots will illustrate the nature of relationships among model covariates:
+
+(ref:ch9-scatter1) **Plot of the presence of red operculum spots against pumpkinseed standard length and sex with a line of best fit plotted.**
+
+```{r ch9-scatter1, fig.cap='(ref:ch9-scatter1)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(pkin, aes(x = sl, y = (spot))) +
+  geom_jitter(shape = 16, size = 3, alpha = 0.6, 
+             height = 0.02, width = 0.25) +
+geom_smooth(formula = y ~ x, method = 'lm', 
+             colour = 'red', se=F, size = 1.5) +
+  My_theme +
+  xlab("SL (mm)") + ylab("Probability of red spot") +
+  facet_grid(.~sex)
+```
+
+The plots in Fig. \@ref(fig:ch9-scatter1) shows a clear positive relationship between pumpkinseed standard length and the presence of red operculum spots. The difference in the slope between `sl` and `spot` for males and females suggests an interaction.  
+
+#### Independence of response variable {#bern-indep9}  
+
+The variable `pop` represents the population of origin of pumpkinseed used in the study. How many unique populations were investigated?
+
+```{r ch9-unique, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+length(unique(pkin$pop))
+```
+And how many rows of data in the dataframe?
+
+```{r ch9-dim, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+dim(pkin)
+```
+An assumption for a GLM is that each observation is independent of all others. For these data, just one record was collected for each pumkinseed in the study. However, fish came from 14 different populations, and the probability of fish possessing a red operculum may vary among populations. This lack of independence in the data needs to be considered in drawing conclusions from the analysis.
+
+### Select and fit a statistical model {#bern-select9}
+
+The study was designed to investigate the presence of red operculum spots in pumkinseed fish. The data exploration showed no problems with outliers, no serious imbalance between the sexes, correlation between `wt` and `sl` (`wt` will be dropped), and evidence of an interaction between `sl` and `sex`. It was also shown that the the response variable `spot` is binomial and comprises 62% zeros. Given these conditions, a Bernoulli distribution is appropriate for modelling these data. The link function for a Bernoulli model is a _logit_ link. A logit link function ensures that the model prediction lies between 0 and 1.
+
+The Bernoulli model will be fitted using the `glmmTMB` package.
+
+```{r ch9-bern1, message=FALSE, echo=TRUE, warning=FALSE}
+
+bern1 <- glmmTMB(spot ~ sl * sex,
+                 data = pkin,
+               family = binomial(link = "logit"))
+```
+
+### Conduct model checks  
+
+We conduct model checks using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values.
+
+```{r ch9-simRes1, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = bern1, plot = F)
+```
+
+Homogeneity of residual variance is assessed by plotting model residual variance against fitted values:   
+
+```{r ch9-plotRes1a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Next, plot model residuals against each covariate included in the model:  
+
+```{r ch9-plotRes1b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = pkin$sl)
+plotResiduals(Res1, form = pkin$sex)
+```
+
+There are no problems with the patterns of these residuals.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch9-plotQQbin1, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res1)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model.   
+  
+### Interpret and present model output  
+
+Obtain model output with:  
+
+```{r ch9-sumbin1, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(bern1)
+print(out, digits = 2, signif.stars=FALSE)
+```
+
+Table 9.1: **Summary of Bernoulli GLM to model the probability of pumpkinseed expressing a red operculum spot as a function of standard length and sex.**
+
+|Model parameter  |Estimate|Z value |P value|
+|:----------------|:------:|:------:|:-----:|
+|Intercept        | -5.01  | -9.42  | <0.001|
+|SL               |  0.04  |  7.15  | <0.001|
+|Sex(Male)        |  0.05  |  0.06  |  0.954|
+|SL:Sex(Male)     |  0.03  |  2.84  |  0.005|
+
+The results (Table 9.1) show a statistically significant interaction between SL and sex on the probability of pumpkinseed possessing a red operculum spot, with a stronger relationship between SL and probability of a red spot in males than in females.
+
+### Visualise the results  
+
+The final step to fitting a GLM is to visualise the model. We will plot model `bern1` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch9-final-plot) **Mean fitted probability of pumpkinseed fish expressing a red operculum spot as a function of Standard Length (mm) for males and females. Data were modelled with a Bernoulli GLM. Black dots are observed data.Shaded areas are 95% confidence intervals.**  
+
+```{r ch9-final-plot, fig.cap='(ref:ch9-final-plot)', fig.align ='center', fig.dim = c(5,4), message=FALSE, echo=TRUE, warning=FALSE}
+set_theme(legend.pos = "top")
+plot_model(bern1, type = "pred", 
+           terms = c("sl", "sex"),
+           colors = c("red2","blue2"),
+           show.data = T,
+           title = "", 
+           jitter = 0.02,
+           axis.title=c("Standard length (mm)", 
+                        "Proportion with red spots"),
+           show.legend = T) + 
+           scale_x_continuous(limits = c(30, 150)) +
+           My_theme
+```
+
+The results of this statistical analysis can be summarised as follows:  
+
+_A Bernoulli GLM was fitted to data on the probability of pumpkinseed fish possessing a red operculum spot. The probability of female pumpkinseed expressing a red spot at a given length was significantly lower than for males (Table 9.1, Fig. \@ref(fig:ch9-final-plot)._  
+
+## Conclusions  
+
+The Bernoulli GLM predicted that male pumpkinseed, had a significantly greater probability of expressing a red operculum spot at a given body size than females. The data set was quite large (900 fish were used in the study), but was structured by population. Fish population of origin was ignored in the analysis, but there is potential for dependency due to population; i.e. the probability of expressing a red spot may differ with population, or the interaction between length and sex may vary from one population to another. If this is the case, a Bernoulli Generalized Linear Mixed Model (GLMM) might be more appropriate for these data than a GLM, with population incorporated into the analysis as a "random" term.
+
+
+  

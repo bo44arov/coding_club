@@ -1,0 +1,504 @@
+# Gamma GLM/GAM {#gamma-glm8}
+
+Gaussian LMs assume that the response variable follows a normal statistical distribution for each level of the covariate values. While we commonly model continuous response variables using a Gaussian LM (Chapter 4), there are limitations to this approach. An assumption in fitting data to a Gaussian distribution is that variation around the mean is symmetric and that the data can be summarised by the arithmetic mean and standard deviation. However, the assumption that continuous biological data are necessarily drawn from a Gaussian distribution may not always be justified; some types of data are typically not symmetric. Another problem is that a normal statistical distribution can generate negative predictions. For some continuous data that ostensibly appear normally distributed, such as body size, negative values are clearly impossible. 
+
+A solution to modelling continuous data that deviate from normality is to transform data. A more satisfactory alternative is to use a distribution that better represents the data. One alternative is the gamma distribution. This distribution can be used to model continuous variables that are strictly positive (i.e. no zeros or negative values) and positively skewed. The gamma distribution is appropriate for biological and ecological data such as body size, pollutant concentrations, or time intervals between (non-random) events.
+
+## Common seal dive duration
+
+The common (harbour) seal ( _Phoca vitulina_ ) is a widespread phocid seal found throughout cold temperate and Arctic waters of the northern hemisphere. They are protected in the UK, which supports approximately 40% of the world’s population of this species. Common seals are generalist predators in coastal waters. They prey chiefly on fish, cephalopods and crustaceans and are capable of extended foraging dives lasting up to 30 minutes.
+
+Data were collected on the maximum dive duration for 29 radio-tagged adult common seals from a population in the Moray Firth on the East coast of Scotland. All seals in the study were of known age, sex, total body length, and lean mass. Lean mass was calculated by deducting blubber mass (estimated from blubber thickness using ultrasound measurements) from total mass.  
+
+*__Load libraries__*
+
+```{r ch8_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+
+library(arm)
+library(car)
+library(dplyr)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(mgcv)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the read.csv function.  
+
+```{r ch8-import-seal, echo=TRUE, warning=FALSE, message=FALSE}
+seal <- read.csv(file = "seal.csv", 
+                header = TRUE, 
+                   dec = ".", 
+      stringsAsFactors = TRUE)
+```
+
+Start by inspecting dataframe `seal`:  
+
+```{r ch8-str-seal, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(seal, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises `r nrow(seal)` observations of `r ncol(seal)` variables. Each row in the dataframe represents a different radio-tagged common seal. Each animal has a unique identification code (`id`). `Sex` is a factor; i.e. a categorical variable, though note that it has been coded numerically in the dataframe (1 = male, 2 = female). Seal age (`age`) in years, lean mass (kg) (`lean_mass`), and maximum dive duration (sec.) (`div_dur`) are all continuous covariates. Maximum dive duration is the response variable that we will model.
+
+We need to convert `sex` from a numerical variable to a factor. For clarity, we will then rename the two levels of `sex`:  
+
+```{r ch8-rename, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+seal$fSex <- as.factor(seal$sex)
+levels(seal$fSex)[levels(seal$fSex)=="1"] <- "Male"
+levels(seal$fSex)[levels(seal$fSex)=="2"] <- "Female"
+levels(seal$fSex)
+```
+
+## Six steps to fitting a GLM {#GLMsteps8}
+
+We will adopt our six-step protocol to fitting a GLM. These are:
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#seal-question}
+
+This study was designed to understand which variables predicted dive duration in common seals. Specifically, the aims of the study were to test whether common seal dive duration was predicted by: 1. lean body mass; 2. age; 3. sex. Based on previous research on elephant seals (_Mirounga_ spp.) and Weddell seals (_Leptonychotes weddellii_), our predictions were that larger individuals would show greater maximum dive duration, as would younger individuals. A further prediction was that males would exhibit greater dive duration than females.
+
+Consequently there are three specific predictions to test:
+
+1. A positive association between lean body mass and maximum dive duration.
+
+2. A negative association between seal age and maximum dive duration.
+
+3. An association between maximum dive duration and sex, with males showing a greater maximum dive duration than females.
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt the 7 step-protocol used in previous chapters that is intended to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers8}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. For the categorical variable `fSex` we use a boxplot to visualise how `dive_dur` varies with sex.
+
+```{r ch8-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+Plot the categorical variable `fSex`:  
+
+(ref:ch8-box-categorical) **Boxplot of dive duration (sec) of number of hard seal species in protected and unprotected sites in the Sulu Sea.**  
+
+```{r ch8-box-categorical, fig.cap='(ref:ch8-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+seal %>%
+  ggplot(aes(y = dive_dur, x = fSex)) +
+  labs(y = "Dive duration (s)", 
+       x = "Sex") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+```
+
+Fig. \@ref(fig:ch8-box-categorical) visualises the median and spread of male and female dive duration, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a higher average dive duration for males. The size of the IQR and range of the data are similar for sexes, indicating homogeneity in the data as well as a lack of outliers. 
+
+To identify outliers for continuous variables we use multi-panel dotplots.
+
+```{r ch8-order, message = FALSE, echo=FALSE, warning=FALSE}
+seal <- seal %>%
+  mutate(order = seq(1:nrow(seal)))
+```
+
+And identify those continuous variables we wish to plot (`age`, `lean_mass` and `dive_dur`), and plot:  
+
+```{r ch8-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(seal, order, age)
+p2 <- multi_dotplot(seal, order, lean_mass)
+p3 <- multi_dotplot(seal, order, dive_dur)
+```
+
+Finally, we use the `grid.arrange` function from the `gridExtra` package to arrange these plots in our preferred format:  
+
+(ref:ch8-dotplot1) **Dotplots of seal age (years) lean mass (kg) and dive duration (s) of common seals. Data are arranged by the order they appear in the dataframe.**  
+
+```{r ch8-dotplot1, fig.cap='(ref:ch8-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+There are no obvious outliers in Fig. \@ref(fig:ch8-dotplot1).  
+  
+#### Distribution of the dependent variable {#gamma-dist8}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise seal dive duration with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+(ref:ch8-freqdens) **Density plot of common seal dive duration for 29 individuals.**
+  
+```{r ch8-freqdens, fig.cap='(ref:ch8-freqdens)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+  seal %>% ggplot(aes(dive_dur)) +
+  geom_density() +
+  labs(x = "Duration (s)", y = "Frequency") +
+  My_theme +
+  theme(panel.border = element_rect(colour = "black", 
+                                    fill=NA, size = 1))
+```
+
+The density plot of the dependent variable (Fig. \@ref(fig:ch8-freqdens)) shows a distribution with a pronounced positive skew. 
+  
+#### Balance of categorical variables {#gamma-balance8}
+
+The balance of the categorical variable `fSex` can be checked using the `table` function.
+
+```{r ch8-status-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(seal$fSex)
+```
+
+The design of the study is well balanced with respect to sex.  
+  
+#### Zeros in the response variable {#gamma-zeros8}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The percentage of zeros in the response variable can be calculated with:  
+
+```{r ch8-zeros, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(seal$species == 0) / nrow(seal))*100,0)
+```
+
+The response variable does not include any zeros (is it possible to record a maximum dive duration of 0s?).  
+
+#### Multicollinearity among covariates {#gamma-collin8}  
+
+If covariates in a model are correlated, then there is a risk that the model may produce unstable parameter estimates with inflated standard errors. Here we examine the relationships among model covariates using the `ggpairs` command from the `GGally` library.  
+
+(ref:ch8-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, and frequency polygons.**  
+
+```{r ch8-ggpairs, fig.cap='(ref:ch8-ggpairs)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+seal %>% 
+    ggpairs(columns = c("fSex", "age", "lean_mass"), 
+         aes(colour = fSex), 
+              lower = list(combo = wrap("facethist", 
+           binwidth = 2)))
+```
+
+The plot matrix in Fig. \@ref(fig:ch8-ggpairs) indicates a weak correlation of age and lean mass for both sexes.
+
+We will calculate a variance inflation factor (VIF) for each variable. The VIF is an estimate of the proportion of variance in one predictor explained by all the other predictors in the model. A VIF of 1 indicates no collinearity. VIF values above 1 indicate increasing degrees of collinearity. VIF values exceeding 3 are potentially problematic.
+
+The VIF for a model can be estimated using the `vif()` function from the `car` package:
+
+```{r ch8-vifs, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round(vif(gamma1 <- lm(dive_dur ~ lean_mass + 
+                                  age + fSex,
+                                  data = seal)),2)
+```
+
+The estimated VIFs are all <3, so we have no problem with multicollinearity in this (Gaussian) model.
+    
+#### Relationships among dependent and independent variables {#gamma-rels8}
+
+
+Visual inspection of the data can illustrate whether relationships are linear or non-linear and whether there are interactions between covariates. See the coding for these plots in the R script associated with this chapter.
+
+(ref:ch8-scatter) **Multipanel scatterplot of common seal dive duration (secs.) against lean mass (kg) and age (years)  for males and females, with a line of best fit plotted.**
+
+```{r ch8-scatter, fig.cap='(ref:ch8-scatter)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+mass_plot <- ggplot(seal, aes(x = lean_mass, 
+                              y = (dive_dur))) +
+  geom_jitter(shape = 16, size = 3, alpha = 0.6, 
+             height = 2, width = 0.25) +
+  geom_smooth(formula = y ~ x, method = 'lm', 
+               colour = 'red', se=F, linewidth = 1.5) +
+  My_theme +
+  xlab("Lean mass (kg)") + ylab("Dive duration (s)") +
+  facet_grid(.~fSex)
+
+age_plot <- ggplot(seal, aes(x = age, 
+                             y = (dive_dur))) +
+  geom_jitter(shape = 16, size = 3, alpha = 0.6, 
+             height = 2, width = 0.25) +
+  geom_smooth(formula = y ~ x, method = 'lm', 
+               colour = 'red', se=F, linewidth = 1.5) +
+  My_theme +
+  xlab("Age (y)") + ylab("") +
+  facet_grid(.~fSex)
+
+ggarrange(mass_plot, age_plot,
+          labels = c("A", "B"),
+          ncol = 2, nrow = 1)
+
+```
+
+The plot of the data in Fig. \@ref(fig:ch8-scatter) does not suggest non-linear patterns in the data. Fitted lines for the relationship between dive duration and lean mass and age suggest positive relationships for both sexes, though we should also note that lean mass and age are weakly correlated. There is no clear evidence of an interaction of sex and lean mass or age. Given the patterns in these data, inclusion of an interaction term in a model is not justified. There also does not appear to be any marked departure from homogeneity; variance in dive duration is comparable across the full range of lean mass and age for both sexes.
+
+To examine homogeneity of dive duration by sex we employ a boxplot and Levene Test:
+
+```{r ch8-sexbox, fig.cap='(ref:ch8-sexbox)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(seal, aes(x = fSex, y = dive_dur, fill=fSex)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.05, size = 3, alpha = 0.5) +
+  My_theme +
+  xlab("Sex") + ylab("Dive duration (s)") +
+  ylim(600,1400) +
+  theme(legend.position = "none")
+
+round(leveneTest(seal$dive_dur,
+           seal$fSex,
+           location = c("median"), 
+           trim.alpha = 0.25),3)
+
+```
+
+The boxplot for sex in Fig. \@ref(fig:ch8-sexbox) indicates comparable variance in both sexes, which is confirmed by the Levene Test (P = 0.182).
+
+#### Independence of response variable {#gamma-indep8}  
+
+The variable `id` is an identifier for seals used in the study. How many unique seals were recorded?
+
+```{r ch8-unique, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+length(unique(seal$id))
+```
+And how many rows of data in the dataframe?
+
+```{r ch8-dim, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+dim(seal)
+```
+A critical assumption for a GLM is that each observation in a dataset is independent of all others. For some data this assumption is difficult to confirm but can be ensured by careful sampling. Strictly randomly collected samples will tend to be independent.
+
+For these data, just one record was collected for each seal in the study and common seals were selected and tagged at random. The research was conducted by an experienced group of scientists with specialist knowledge of the species, a good understanding of statistics and ecological survey design, and clear research aims. In this case, we can assume that data were collected in a way to ensure their independence.  
+
+### Select and fit a statistical model {#gamma-select8}
+
+The data exploration showed no outliers, a positively skewed response variable with no zeros, no departure from homogeneity, good balance, no pronounced collinearity, and likely independence of the data. An option is to fit the model as a Gaussian LM but an alternative approach is to model the data with a gamma distribution and a log link function. A gamma distribution is suitable for stricly positive data (no negative values, no zeros) that are skewed, which is the case with dive duration. We will fit a Gaussian LM and gamma GLM and compare their fit using AIC.
+
+Three covariates will be included in the model as predictors of dive duration; lean mass (continuous), age (continuous) and sex (categorical, with two levels). The data exploration provided no evidence for an interaction in the data and one will not be included.  
+
+Fit both models and compare with AIC:
+
+```{r ch8-models1, message=FALSE, echo=TRUE, warning=FALSE}
+gaus1 <- glmmTMB(dive_dur ~ fSex + lean_mass + age,
+              family = "gaussian"(link = identity),
+                data = seal)
+
+gamma1 <- glmmTMB(dive_dur ~ fSex + lean_mass + age,
+                       family = "Gamma"(link = log),
+                         data = seal)
+
+round(AIC(gaus1,gamma1),0)
+```
+
+The gamma GLM give a better fit.  
+
+
+### Conduct model checks  
+
+We will implement checks for model `gamma1` using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values.
+
+```{r ch8-simRes1, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = gamma1, plot = F)
+```
+
+Homogeneity of residual variance can be assessed by plotting model residual variance against fitted values:   
+
+```{r ch8-plotRes1a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch8-plotQQnb1, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotQQunif(Res1)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model. Next, plot model residuals against each covariate in the model separately:  
+
+```{r ch8-plotRes1b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = seal$fSex)
+plotResiduals(Res1, form = seal$lean_mass)
+plotResiduals(Res1, form = seal$age)
+```
+
+There is a problem with the pattern of residual variance for `lean_mass`. Let's examine this problem further by plotting the model residuals against `lean_mass`.
+
+```{r ch8-plotResplot, message=FALSE, echo=TRUE, warning=FALSE}
+seal$Res  <- resid(gamma1)
+
+ggplot(seal, aes(x = lean_mass, y = (Res))) +
+  geom_jitter(shape = 16, size = 3, alpha = 0.6, 
+             height = 2, width = 2) +
+  geom_smooth(formula = y ~ x, method = 'loess', 
+              colour = 'red', se = F, size = 1.5) +
+  My_theme +
+  xlab("Lean mass kg)") + ylab("Model residuals") +
+  facet_grid(.~fSex)
+```
+
+ It looks like there may be a non-linear pattern in the residuals as a function of `lean_mass`. This non-linear pattern in the residual variance suggests a GLM may not be adequate to model these dive duration data. An option is to fit a Generalised Linear Model (GAM) and compare it with the GLM.
+ 
+We fit a gamma GAM using the `mgcv` package and put a _smoothing term_ on the variable `lean_mass`. After fitting the model, we plot the _smoother_ for `lean_mass`:
+
+```{r ch8-gam1, message=FALSE, echo=TRUE, warning=FALSE}
+gam1 <- gam(dive_dur ~ fSex + s(lean_mass) + age,
+                       family = "Gamma"(link = log),
+                       data = seal)
+plot(gam1)
+```
+As suspected, the plot of the smoother suggests a non-linear relationship between seal lean mass and dive duration. How does the fit of the gamma GAM compare with the gamma GLM and Gaussian LM?
+
+```{r ch8-modelsAIC, message=FALSE, echo=TRUE, warning=FALSE}
+round(AIC(gaus1,gamma1,gam1),0)
+```
+The gamma GAM give a much improved fit. Given this improvement in fit, let's conduct model checks of the gamma GAM.
+
+First simulate scaled residuals for the gamma GAM:
+
+```{r ch8-simRes2, message=FALSE, echo=TRUE, warning=FALSE}
+Res2 <- simulateResiduals(fittedModel = gam1, plot = F)
+```
+
+Then assess homogeneity of residual variance:   
+
+```{r ch8-plotRes2a, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res2)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch8-plotQQnb2, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res2)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model. Next, plot model residuals against each covariate in the model separately:  
+
+```{r ch8-plotRes2b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res2, form = seal$fSex)
+plotResiduals(Res2, form = seal$lean_mass)
+plotResiduals(Res2, form = seal$age)
+```
+
+There is now no problem with the pattern of residual variance for `lean_mass`.
+
+
+### Interpret and present model output
+
+```{r ch8-sumgam, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(gam1)
+print(out, digits = 3, signif.stars=FALSE)
+```
+
+Table 8.1: **Mean estimates for the maximum dive duration of common seals in the UK as a function of sex, age and lean mass, modelled using a gamma GAM with a smoothing term placed on lean mass.**
+
+|Model parameter   |Estimate|t value|P value|
+|:-----------------|:------:|:-----:|:-----:|
+|Intercept         |  6.80  | 94.01 | <0.001|
+|Sex(female)       | -0.06  | -2.77 |  0.011|
+|age               | -2.15  |  0.78 |  0.444|
+|s(Lean mass)      |        |       | <0.001|
+  
+
+These results (Table 8.1) show a statistically significant effect of sex on maximum dive duration (lower in females than males), no effect of age, and a highly significant non-linear positive effect of lean mass.
+
+### Visualise the results  
+
+The final step to fitting a model is to visualise the output. We can plot model `gam1` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch8-final-plot1) **Posterior mean dive duration (s) of 29 common seals (_Phoca vitulina_) as a function of lean mass (kg) and sex, modelled using a gamma GAM. Shaded areas are 95% confidence intervals. Points are observed data for different sampling sites.**
+
+```{r ch8-final-plot1, fig.cap='(ref:ch8-final-plot1)', fig.align ='center', fig.dim = c(6,5), message=FALSE, echo=TRUE, warning=FALSE}
+set_theme(legend.pos = "top")
+plot_model(gam1, type = "pred", 
+           terms = c("lean_mass", "fSex"),
+           colors = c("mediumblue","red2"),
+           show.data = TRUE,
+           title = "", 
+           jitter = 0.1,
+           legend.title = "Sex",
+           axis.title = c("Lean mass (kg)",
+                          "Dive duration (s)"),
+           show.legend = T) + My_theme
+```
+
+Also plot each variable separately:
+
+(ref:ch8-final-plot2) **Posterior mean dive duration (s) of 29 common seals (_Phoca vitulina_) as a function of age (years), lean mass (kg) and sex, modelled using a gamma GAM. Shaded areas are 95% confidence intervals. Points are observed data for different sampling sites.**
+
+```{r ch8-final-plot2, fig.cap='(ref:ch8-final-plot2)', fig.align ='center', fig.dim = c(7,5), message=FALSE, echo=TRUE, warning=FALSE}
+p4 <- plot_model(gam1, type = "pred", terms = c("age"),
+                  show.data = TRUE, title = "", 
+                     jitter = 0.1,
+                 axis.title = c("Age (years)", 
+                                "Dive duration (s)"),
+                     colors = c("mediumblue"),
+                show.legend = FALSE) + My_theme
+
+p5 <- plot_model(gam1, type = "pred", 
+                      terms = c("lean_mass"),
+                  show.data = TRUE, title = "", 
+                     jitter = 0.1,
+                 axis.title = c("Lean mass (kg)", ""),
+                     colors = c("red2"),
+                show.legend = FALSE) + My_theme
+
+
+p6 <- plot_model(gam1, type = "pred", 
+                      terms = c("fSex"),
+                  show.data = TRUE, jitter = 0.1,
+                 axis.title = c("Sex", ""), title="", 
+                     colors = c("darkgreen"),
+                show.legend = FALSE) + My_theme
+
+grid.arrange(p4, p5, p6, nrow = 1)
+```
+
+The results of this statistical analysis can be summarised as follows:
+
+_A gamma GAM was fitted to data to predict the maximum dive duration (s) of a group of 29 radio-tagged common seals_ (Phoca vitulina). _There was a statistically significant positive effect of seal lean mass (kg) and sex on dive duration; with males performing longer dives than females (Table 8.1); Fig. \@ref(fig:ch8-final-plot2)). We detected no significant effect of seal age on dive duration (Table 8.1); Fig. \@ref(fig:ch8-final-plot2)). A smoothing term was placed on seal lean mass to accommodate non-linearities in the data._
+
+## Conclusions
+
+A gamma distribution offers an alternative to the Gaussian distribution for strictly positive and skewed data, such as those modelled here. This approach avoids having to transform the response variable and fit a Gaussian LM. Model fit for the gamma GLM was good, and unlike a Poisson or negative binomial GLM, the problem of overdispersion does not apply to a gamma GLM. However, non-linearities in the data were identified by plotting model residuals against each variable in the model, and a better model fit was subsequently obtained using a gamma GAM.

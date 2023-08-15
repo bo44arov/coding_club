@@ -1,0 +1,387 @@
+# Beta GLM {#beta-model11}
+
+A beta distribution can be used to model data that fall between 0 and 1, though it is not able to deal with exact 0s or 1s. The beta distribution can be used to model continuous variables, such as rates and proportions. It can also be used to model proportions of “successes” from a series of trials and is, therefore, similar to a binomial GLM for proportional data (Chapter 10), but provides more flexibility, in particular if trials are not independent.  
+
+## Weatherfish diet {#weatherfish11}
+
+The weatherfish (_Misgurnus fossilis_) is a freshwater fish that is tolerant of unfavourable environmental conditions and can survive low dissolved oxygen concentrations and high water temperatures. Its ability to survive low oxygen tensions is due to its capacity for cutaneous respiration and to perform oxygen uptake via its gut. The weatherfish is believed to be a nocturnal omnivore, feeding chiefly on insect larvae, small crustaceans and molluscs as well as on detritus. Despite its unspecialised habitat and feeding requirements, and adaptations to poor water quality, it has declined in many regions and has been included in numerous governmental Red Lists of endangered and protected fishes throughout Europe.
+
+A study was conducted by Pyrzanowski _et al._ (2019) to understand the diet composition of weatherfish in two seasons characterized by contrasting conditions. The specific aim of the study was to determine whether detritus makes a significant contribution to the diet of weatherfish, and whether this dietary component varied with fish size and season. The prediction tested was that weatherfish are able to survive low oxygen conditions in late summer, when prey are scarce, by switching to a diet high in detritus. Weatherfish were collected in late summer 2014 and early summer 2015 from a tributary of the River Bzura in Poland where the species is abundant.
+
+The subset of the data collected by Pyrzanowski et al. (2019) is presented here and include season of collection (early and late in the summer), individual fish length (cm), and the proportion by weight of detritus in the diet (%). Percentage of detritus in the diet is the response variable, and the other variables are covariates (i.e. predictors); season is a categorical variable with two levels (early summer and late summer) and length is a continuous variable.
+
+First, we load required libraries (see Section \@ref(functions)) and import the data (see Section \@ref(import)).
+
+*__Load libraries__*
+
+```{r ch11_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+```
+
+*__Import data__*
+
+Data for weatherfish are saved in a comma-separated values (CSV) file `wfish.csv` and are imported into a dataframe in R using:  
+
+```{r ch11-import-wfish, echo=TRUE, warning=FALSE, message=FALSE}
+wfish <- read.csv(file = "wfish.csv",
+                header = TRUE, 
+                   dec = ".",
+      stringsAsFactors = TRUE)
+```
+
+Start by inspecting dataframe `wfish`:
+
+```{r ch11-str-wfish, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(wfish, width = 50, strict.width = "cut")
+```
+
+The dataframe comprises `r nrow(wfish)` observations of `r ncol(wfish)` variables. Each row in the dataframe represents a record for a different weatherfish. The variables are the categorical variable `season` with two levels; ‘early’ and ‘late’. The two other variables in the dataframe are `length` and `detritus`, corresponding with individual weatherfish length (cm) and proportion by weight of detritus in the diet (%). These are numerical continuous variables.  
+
+Let's also check for missing data.
+
+```{r ch11-NAs, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+colSums(is.na(wfish))
+```
+
+No missing data.
+
+## Six steps to fitting a GLM {#GLM7steps11}
+
+We will adopt a six-step protocol to fitting a (G)LM. These are:
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question
+
+This study was conducted to understand the change in the proportion of the diet depending on fish size and between seasons.
+
+Consequently there are three specific predictions to test:
+
+1. Test whether body size predicts the proportion of detritus in the diet of weatherfish.  
+
+2. Test whether the proportion of detritus in the diet varies seasonally.  
+
+3. Test whether the relationship between body size and the proportion of detritus in the diet varies seasonally.  
+  
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+This protocol comprises 7 steps to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_** 
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers11}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. (G)LMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variable `fSupp`, we use a boxplot to visualise how `resp_dist` varies with the provision of a food supplement.  
+
+```{r ch11-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+Plot the categorical variable `season`:  
+
+(ref:ch11-box) **Boxplots of proportion by weight of detritus in the diet (%) of weatherfish from early and late summer collections.**  
+
+```{r ch11-box, fig.cap='(ref:ch11-box)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+wfish %>%
+  ggplot(aes(y = detritus, x = season)) +
+  labs(y = "Detritus (%)", 
+       x = "Season") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+``` 
+
+Fig. \@ref(fig:ch11-box) visualises the median and spread of detritus in the diet of weatherfish, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a greater average percentage of detritus in the diet of weatherfish later in the summer than early. The size of the IQR and range of the data are, however, similar for both periods, indicating homogeneity in the data.  
+
+To look for outliers in the continuous variables `length` and `detritus` we order the data in the sequence they appear in the dataframe `wfish`:  
+
+```{r ch11-order, message = FALSE, echo=FALSE, warning=FALSE}
+wfish <- wfish %>%
+  mutate(order = seq(1:nrow(wfish)))
+```
+
+To look for outliers in the continuous variables `length` and `detritus` we first identify them:  
+
+```{r ch11-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(wfish, order, length)
+p2 <- multi_dotplot(wfish, order, detritus)
+```
+
+Then use the `grid.arrange` command from the `gridExtra` package to arrange these plots in our preferred format:  
+
+(ref:ch11-dotplot1) **Dotplots of the continuous variables length and detritus. Data are arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch11-dotplot1, fig.cap='(ref:ch11-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, nrow = 1)
+```
+
+In Fig. \@ref(fig:ch11-dotplot1) the dotplots for `length` and `detritus` show no clear outliers.  
+
+#### Normality and homogeneity of the response variable {#normality11}  
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise rook herd number with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+```{r ch11-freqpoly, fig.cap='(ref:ch11-freqpoly)', message = FALSE, echo=TRUE, warning=FALSE}
+wfish %>% ggplot(aes(detritus)) +
+  geom_freqpoly(bins = 12) +
+  labs(x = "Detritus (%)", y = "Frequency") +
+  My_theme
+```
+
+(ref:ch11-freqpoly) **Frequency polygon of proportion by weight of detritus in the diet (%) of weatherfish.**  
+
+The frequency polygon plot of the dependent variable (Fig. \@ref(fig:ch11-freqpoly)) shows a distribution that is clearly non-normal. However, this figure ignores the covariate values, which may explain deviation from normality. Given that we already know that the distribution of detritus in the diet varies with season of fish collection (Fig. \@ref(fig:ch11-freqpoly)), it should be no surprise that the data show two peaks. Fish size may also affect the distribution of the dependent variable. At this stage, then, we can proceed with the data exploration satisfied that the response variable is approximately normally distributed. We could also create subsets of the data for season and test whether the distribution of detritus is normal early and late in the season.   
+
+_Homogeneity of variance_ is an even distribution of covariate values around the mean and is another important assumption of many statistical tests. Without homogeneity of variance estimated P-values are unreliable. There are several ways to measure homogeneity of variance.  
+
+To visualise the homogeneity of the response variable in relation to a categorical covariate a boxplot is illustrative. Fig. \@ref(fig:ch11-box) showed no obvious variation in the spread of response distance data between levels of the factor `season`,  indicating homogeneity. A scatterplot is better to visualise homogeneity of variance in relation to a continuous covariate.  
+
+(ref:ch11-scatter2-wfish) **Scatterplot of `resp_dist` and `sl`. The variance in response distance is similar across the range of male SLs, indicating homogeneity of the data.**  
+
+```{r ch11-scatter2-wfish, fig.cap='(ref:ch11-scatter2-wfish)', fig.align='center', fig.dim=c(6, 4), message = FALSE, echo=FALSE, warning=FALSE}
+
+wfish %>% 
+  ggplot(aes(x = length, y = detritus)) +
+  geom_jitter(shape = 19, size = 3.5, height = 0.05, 
+              width = 0.05, alpha = 0.5) +
+  labs(x = "Length (cm)", y = "Detritus (%)") +
+  facet_grid(.~season) +
+  My_theme
+```
+
+The scatterplot (Fig. \@ref(fig:ch11-scatter2-wfish)) shows limited departure from homogeneity. Variance in the proportion of detritus in the diet looks slightly greater late in the season than early. Variance may also be greater in larger weatherfish, though the effect is not striking.  
+
+There are several tests of homogeneity of variance, should we need one, such as Bartlett's Test, the F-ratio test, and Levene's test. The first two of these tests assume normality of the data. If your data deviate from normality they should not be used. Levene's test does not assume normality. An alternative is the Brown & Forsythe test, which uses the median rather than mean in its estimation, and is robust to departures from normality. This test is based on Levene's test and can be obtained using the `levene.test()` function from the `lawstat` package:  
+
+```{r ch11-levene-wfish, message=FALSE, echo=TRUE, warning=FALSE}
+leveneTest(wfish$detritus,
+           wfish$season,
+           location = c("median"), 
+           trim.alpha = 0.25)
+```
+
+Which confirms the data do deviate from homogeneity (P = 0.017).  
+
+#### Balance of categorical variables {#balance11}    
+
+Imbalance in data occurs when we have a categorical variable with markedly different numbers of observations of different levels. If a model contains one or more unbalanced variables, and particularly if variances among levels also differ, then fitted models have reduced power.  
+
+Imbalance can be identified using the `table` command from base R.  
+
+```{r ch11-table-supp, message=FALSE, echo=TRUE, warning=FALSE}
+table(wfish$season)
+```
+
+There is some imbalance between levels of the factor `season`.  
+
+#### An excess of zeros in the response variable {#zeros11}   
+
+Zeros should not be omitted from a dataset. However, an excess of zeros in the response variable can cause problems in an analysis, though there are a number of ways of dealing with 'zero inflation' in data. The first step is to identify whether there is a potential problem. The percentage of zeros in the response variable can be estimated as:  
+
+```{r ch11-zeros, message=FALSE, echo=TRUE, warning=FALSE}
+round(sum(wfish$detritus == 0) * 100 / nrow(wfish),0)
+```
+
+The variable `detritus` comprises 6% zeros. Zero inflation does not appear to be a problem with these data, but we will have to consider how to handle these zeros if we use a beta distribution for our model.
+
+#### Multicollinearity among covariates  
+
+Along with normality of residuals and homogeneity of variance, an additional assumption of linear modelling is independence of the independent variables. In ecological studies it is not unusual to collect a large number of variables, which are often highly correlated. If covariates in a model are correlated, then the model may produce unstable parameter estimates with inflated standard errors.  
+
+Multicollinearity can be tested in several ways. We can obtain a comprehensive summary of the relationship between the two model covariates using the `ggpairs` command from the `GGally` package:  
+
+(ref:ch11-ggpairs) **Plot matrix of wfisherling standard length (cm) and supplementary feeding treatment. The top left panel shows a frequency plot of standard length split by feeding treatment, while the top right shows the same data expressed as a boxplot. The lower left panel shows a length-frequency histogram of standard lengths, with those for males that did not receive supplementary feeding above and those that did, below. The lower right panel shows the total number of individual males in each supplementary feeding treatment.**  
+
+```{r ch11-ggpairs, fig.cap='(ref:ch11-ggpairs)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+wfish %>% 
+    ggpairs(columns = c("season", "length"), 
+         aes(colour = season, alpha = 0.8), 
+              lower = list(combo = wrap("facethist", 
+           binwidth = 2)))
+```
+
+The plot matrix in Fig. \@ref(fig:ch11-ggpairs) demonstrates no clear pattern of collinearity between the two covariates and illustrates good overlap in weatherfish length between seasons.  
+
+#### Relationships among dependent and independent variables  
+
+Visual inspection of the data using plots is a critical step and will illustrate whether relationships are linear or non-linear and whether there are interactions between   covariates.
+
+(ref:ch11-rels-wfish) **Multipanel scatterplot of percentage by weight of detritus in the diet (%) and length (cm) of weatherfish early and late in the summer with a line of best fit plotted.**  
+
+```{r ch11-rels-wfish, fig.cap='(ref:ch11-rels-wfish)', fig.align='center', fig.dim=c(6, 4), cache = TRUE,  message = FALSE, echo=FALSE, warning=FALSE}
+
+label_seas <- c("early" = "Early summer", 
+                "late" = "Late summer")
+
+ggplot(wfish, aes(x = length, y = detritus)) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, height = 0.5, width = 0.25) +
+  geom_smooth(formula = y ~ x, method = 'lm', 
+              colour = 'red', se = FALSE, linewidth = 1.5) +
+  My_theme +
+  xlab("Length (cm)") + ylab("Detritus (%)") +
+  facet_grid(.~ season, 
+             scales = "fixed", space = "fixed", 
+             labeller=labeller (fSupp = label_seas))
+```
+
+The plot of the data in Fig. \@ref(fig:ch11-rels-wfish) do not suggest a strongly non-linear pattern in the data. Fitted lines for the relationship between percentage by weight of detritus in the diet (%) and length (cm) indicate that the nature of this relationship varies with season, implying an interaction between fish size and season; i.e. the slopes differ between seasons. An interaction means that the relationship between length and detritus in the diet depends on season; season and length interact to predict detritus in the diet. Interactions like this one are biologically interesting. Given the striking pattern in these data, inclusion of an interaction term in the model is justified.  
+
+#### Independence of the response variable  
+
+A critical assumption for a GLM is that each observation in a dataset is independent of all others. For some data this assumption is difficult to confirm but can be reduced by careful sampling. Strictly randomly collected samples will tend to be independent. Additional information, such as spatial location or time of collection, can be included in a dataset. Spatial and temporal dependency in ecological data are common and require specific modelling approaches. For the weatherfish data, animals were collected by an experienced group of scientists with specialist knowledge of the species and the data were collected in such a way as to maximise their independence.  
+
+### Select and fit a statistical model  
+
+The study was designed understand how the proportion of detritus in the diet of weatherfish changed as a function of male size early and late in the summer. The dependent variable is was shown to be continuous and non-normally distributed (Fig. \@ref(fig:ch11-freqpoly)). There are some zeros in the response variable and there is good reason to believe data are independent. The relationship between male standard length and response distance is positive, but varies with season (Fig. \@ref(fig:ch11-rels-wfish)). There is no problem with outliers or collinearity in the data.
+
+Given these findings from the data exploration, a beta distribution is an option, though the beta distribution can only be used for a variable that is between 0 and 1 (excluding the boundaries). What can we do if the data contain zeros and ones? In that case, we 'transform' the response variable using: 
+
+_(Y * (N - 1) + 0.5) / N_
+
+where Y is your response variable and N is the sample size. This transformation changes 0 to 0.00small and 1 to 0.999high. The effect is to remove zeros and 1s, but without changing the fundamental structure of the data.
+
+First convert detritus to a proportion:  
+
+```{r ch11-prop, message=FALSE, echo=TRUE, warning=FALSE}
+wfish$propdet <- (wfish$detritus/100)
+```
+
+Then apply the transformation:  
+
+```{r ch11-betadet, message=FALSE, echo=TRUE, warning=FALSE}
+N <- nrow(wfish)
+wfish$betadet <- (wfish$propdet * (N - 1) + 0.5) / N
+```
+
+
+We now use `betadet` as the response variable (no zeros or 1s). The model will include `length` and `season` and an interaction, fitted using the `glmmTMB` package. The link function for a beta model is a _logit_ link. A logit link function ensures that the model prediction falls between 0 and 1.
+
+```{r ch11-beta1, message=FALSE, echo=TRUE, warning=FALSE}
+beta1 <- glmmTMB(betadet ~ length * season,
+                    data = wfish,
+                  family = beta_family(link = "logit"))
+
+```
+
+### Conduct model checks  
+
+Start by using the `simulateResiduals` command from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values to ensure model `Gaus1` is not misspecified.  
+
+```{r ch11-simRes, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = beta1, plot = F)
+```
+
+Plot residuals:  
+
+```{r ch11-plotRes, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+Calculates a quantile regression of the residuals, for the 0.25, 0.5 and 0.75 quantiles. The residuals should be uniformly distributed for a correctly specified model, so the expectation for these regressions are straight lines at 0.25, 0.5 and 0.75, which are displayed as dashed black lines on the plot. 
+
+Plot model residuals against each covariate in the model:  
+
+```{r ch11-plotResCov, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = wfish$length)
+plotResiduals(Res1, form = wfish$season)
+```
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch11-plotQQ11, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res1)
+```
+
+Model checks indicate no problems with the model.  
+
+### Interpret and present model output  
+
+Obtain model output with:  
+
+```{r ch11-sumbeta1, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(beta1)
+print(out, digits = 2, signif.stars=FALSE)
+```
+
+Table 11.1: **Mean estimates for proportion of detritus in the diet of of weatherfish (_Misgurnus fossilis_) as a function of length (cm) and season, modelled using a beta GLM.**  
+
+|Model parameter          |Estimate|Z value|P value|
+|:------------------------|:------:|:-----:|:-----:|
+|Intercept                | -4.15  |-10.16 | <0.001|
+|Length                   |  0.18  |  6.53 | <0.001|
+|Season(early)            |  3.14  |  5.38 | <0.001|
+|Length : Season(early)   | -0.15  |  0.04 | <0.001|  
+
+These results show a highly significant interaction between fish length and season of collection. To understand this result it is best to visualize the model result in a figure. 
+
+### Visualise the results  
+
+We can plot the model using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch11-plotbeta1) **Mean fitted proportion of detritus in the diet of weatherfish against length (cm) in two seasons (early and late summer) modelled using a beta GLM. Points are observed data and shaded area is the 95% confidence intervals of the model.**  
+
+```{r ch11-plotbeta1, fig.cap='(ref:ch11-plotbeta1)', fig.align ='center', fig.dim = c(5,4), message=FALSE, echo=TRUE, warning=FALSE}
+  set_theme(legend.pos = "top")
+plot_model(beta1, type = "pred", 
+           terms = c("length", "season"),
+           colors = c("red","blue2"),
+           show.data = TRUE,
+           title = "", 
+           jitter = 0.1,
+           axis.title = c("Fish length (cm)", 
+          "Proportion detritus in diet"),
+           show.legend = T) + My_theme
+
+```
+
+The results of this statistical analysis can be summarised as follows:  
+
+_A beta GLM was fitted to data to predict the proportion of detritus in the diet of weatherfish (Misgurnus fossilis). There was a significant interaction between length and collection season (Table 11.1), with a significantly stronger relationship between body length and proportion of detritus in the diet early in the year than later (Fig. \@ref(fig:ch11-plotbeta1)._
+
+## Conclusions
+
+The beta GLM predicted a positive relationship between the contribution of detritus to the diet of weatherfish and body size, measured as length. This relationship changed with season, with an overall greater contribution of detritus to the diet in late summer. This effect was predicted (Pyrzanowski _et al_. 2019), with the increased consumption of detritus by all sizes of weatherfish in late summer interpreted as a feeding strategy during a period of scarcity of alternative food types.
+
+

@@ -1,0 +1,31 @@
+# Coda {#coda}
+
+We hope this book extends your understanding of GLMs. We are interested in receiving feedback and welcome questions about your analyses; feel free to email us. We sometimes run statistics workshops, and if you think this might be useful please email us to discuss your requirements.
+
+The key to mastering statistics with R is to practice performing analyses and continually expanding your understanding and knowledge of the subject. There are numerous excellent textbooks and online courses to support your development as a statistician and R user. As your understanding develops, you can extend your skills and acquire a deeper understanding of the subject. However, coding skills are quickly lost, and the statistics and data science fields develop rapidly; consistent development of skills are needed to achieve competency.
+<br>  
+<br>  
+_“For whosoever hath, to him shall be given, and he shall have more abundance: but whosoever hath not, from him shall be taken away even that he hath.”_  
+
+**Matthew 13:12**
+
+
+  
+# Further reading
+
+Books and papers we have found useful include:
+
+Faraway, J.J., 2016. _Linear models with R_. Chapman and Hall/CRC.
+
+Faraway, J.J., 2016. _Extending the linear model with R_. Chapman and Hall/CRC.
+
+Warton, D.I., 2022. _Eco-stats: data analysis in ecology_. Springer.
+
+Zuur, A.F., Hilbe, J.M. and Ieno, E.N., 2013. _A beginner's guide to GLM and GLMM with R: A frequentist and Bayesian perspective for ecologists_. Highland Statistics Limited. 
+
+Zuur, A.F. and Ieno, E.N., 2016. A protocol for conducting and presenting results of regression‐type analyses. _Methods in Ecology and Evolution_ 7, 636-645.
+
+Zuur, A.F., Ieno, E.N. and Elphick, C.S., 2010. A protocol for data exploration to avoid common statistical problems. _Methods in Ecology and Evolution_ 1, 3-14.
+
+Zuur, A., Ieno, E.N., Walker, N., Saveliev, A.A. and Smith, G.M., 2009. _Mixed effects models and extensions in ecology with R_. Springer.
+

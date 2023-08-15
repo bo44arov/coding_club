@@ -1,0 +1,463 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+# Generalised Poisson GLM {#gp-model7}
+
+While the overdispersion of data is a common problem with fitting ecological data using a Poisson GLM, another problem can be underdispersion. Underdispersion occurs when data exhibit less variation than expected based on a Poisson distribution. Examples of count data that are typically underdispersed include litter and clutch sizes, or abundance counts of territorial species.  
+  
+## European bison herd size  
+  
+We fitted a GLM to data on European bison (_Bison bonasus_) herd size in different regions of eastern Poland. Surveys were based on visual counts of adult bison in forest at a distance of around 100 m. In addition to a count of the number of animals, a record was made of elevation (m) and distance to open meadows (m). Forest cover (%) and forest type (conifer, oak or wet forest) were also recorded. Data for 39 independent herds were collected, ranging in size from 4-14 adult bison.
+
+*__Load libraries__*
+
+```{r ch7_libraries, echo=TRUE, warning=FALSE, message=FALSE}
+library(arm)
+library(car)
+library(dplyr)
+library(effects)
+library(ggplot2)
+library(GGally)
+library(lattice)
+library(lawstat)
+library(outliers)
+library(tidyverse)
+library(rlang)
+library(gridExtra)
+library(glmmTMB)
+library(tidyverse)
+library(DHARMa)
+library(AICcmodavg)
+library(performance)
+library(ggpubr)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+```
+
+*__Import data__*
+
+To import the data, change the working directory to the one in which the .csv file is saved, and use the read.csv function.  
+
+```{r ch7-import-bison, echo=TRUE, warning=FALSE, message=FALSE}
+bison <- read.csv(file = "bison.csv", 
+                header = TRUE, 
+                   dec = ".", 
+      stringsAsFactors = TRUE,)
+```
+
+Start by inspecting dataframe `bison`:  
+
+```{r ch7-str-bison, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+str(bison, vec.len=2)
+```
+
+The dataframe comprises `r nrow(bison)` observations of `r ncol(bison)` variables. Each row in the dataframe represents a separate surveyed group of bison of size `herd`. There are three continuous ecological variables: `elev` is elevation above sea level (in m) for each location, `dist` is the horizontal distance to the nearest open meadow (in m), and cover is the proportion of canopy cover (%). There is a single categorical variable `type` which indicates the forest type, with three levels; conifer, oak and wetland forest. 
+
+For clarity, let's rename the two levels of `type` using the `recode` function:  
+
+```{r ch7-rename, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+bison$type <- dplyr::recode(bison$type, 
+                              "con" = "Conifer",
+                              "oak" = "Oak", 
+                              "wet" = "Wetland")
+levels(bison$type)
+```
+
+## Six steps to fitting a GLM {#ch7-GLMsteps7}
+
+We will again adopt our six-step protocol to fitting a GLM. These are:
+
+**_1. State the question_**  
+**_2. Perform a data exploration_**  
+**_3. Select and fit a statistical model_**  
+**_4. Conduct model checks_**  
+**_5. Interpret and present model output_**  
+**_6. Visualise the results_**  
+
+### State the question {#bison-question}
+
+The study was conducted to determine bison habitat preference, measured as herd size. The variable `herd` is the response variable with `elev`, `dist`, `cover`, and `type` as covariates. All these variables were believed to potentially play a role in predicting herd size.
+
+### Perform a data exploration  
+
+We start by conducting a data exploration to identify any potential problems with the data. 
+
+*__Seven-step data exploration protocol__*  
+
+We adopt the 7 step-protocol used in previous chapters that is intended to identify:  
+
+**_1.	Outliers in response and independent variables_**  
+**_2.	Normality and homogeneity of the response variable_**  
+**_3.	Balance of categorical variables_**  
+**_4.	An excess of zeros in the response variable_**  
+**_5.	Multicollinearity among independent variables_**  
+**_6.	Relationships among response and independent variables_**  
+**_7.	Independence of the response variable_**  
+
+#### Outliers in response and independent variables {#outliers7}  
+
+An outlier is an observation that has a relatively large or small value compared to the other observations. GLMs are sensitive to the presence of outliers in data. Outliers are best identified visually. For the categorical variable `type` we use a boxplot to visualise how `herd` varies with forest `type`.
+
+```{r ch7-My-theme, warning=FALSE, echo=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=50)}
+My_theme <- theme(panel.background = element_blank(),  
+          panel.border = element_rect(fill = NA, size = 1),  
+          strip.background = element_rect(fill = "white",  
+          color="white"), text=element_text(size = 12),  
+          panel.grid.major = element_line(colour = "white"),  
+          panel.grid.minor = element_line(colour = "white"))  
+
+multi_dotplot <- function(filename, Xvar, Yvar){
+  filename %>%
+    ggplot(aes(x = {{Xvar}})) +
+    geom_point(aes(y = {{Yvar}})) +
+    My_theme +
+    coord_flip() +
+    labs(x = "Order of data")}
+```
+
+(ref:ch7-box-categorical) **Boxplot of bison herd size in different forest types.**  
+
+```{r ch7-box-categorical, fig.cap='(ref:ch7-box-categorical)', fig.align='center', fig.dim=c(6, 4), message=FALSE, echo=TRUE, warning=FALSE}
+bison %>%
+  ggplot(aes(y = herd, x = type)) +
+  labs(y = "Size of bison herd", 
+       x = "Forest type") +
+  geom_boxplot(fill = "gray88", outlier.shape = NA) +
+  My_theme
+```
+
+Fig. \@ref(fig:ch7-box-categorical) visualises the median and spread of the number of  bison herd size in different woodland types, with the median represented as a thick horizontal line and the 25% and 75% quartiles (the inter-quartile range or IQR) represented by the box. The vertical black lines extending from the box represent the range of the data. The boxplot shows that there was a higher average number of bison oak forest than conifer and wetland forest. The size of the IQR and range of the data are similar for all forest types, indicating homogeneity in the data and a lack of outliers. 
+
+To identify outliers for continuous variables we use multi-panel dotplots.
+
+```{r ch7-order, message = FALSE, echo=FALSE, warning=FALSE}
+bison <- bison %>%
+  mutate(order = seq(1:nrow(bison)))
+```
+
+And identify those continuous variables we wish to plot (`depth`, and `herd`):  
+
+```{r ch7-grid1, message = FALSE, echo=TRUE, warning=FALSE}
+p1 <- multi_dotplot(bison, order, herd)
+p2 <- multi_dotplot(bison, order, elev)
+p3 <- multi_dotplot(bison, order, dist)
+p4 <- multi_dotplot(bison, order, cover)
+```
+
+Finally, use the `grid.arrange` function from the `gridExtra` package to arrange these plots in our preferred format:  
+
+(ref:ch7-dotplot1) **Dotplots of the continuous variables `depth` and `herd`. Data are arranged by the order they appear in the dataframe (bottom to top).**  
+
+```{r ch7-dotplot1, fig.cap='(ref:ch7-dotplot1)', message = FALSE, echo=TRUE, warning=FALSE}
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+There are no obvious outliers in Fig. \@ref(fig:ch7-dotplot1).  
+  
+#### Distribution of the dependent variable {#nb-dist7}
+
+The distribution of the dependent variable will inform selection of the appropriate statistical model to use. Here we visualise bison herd number with a density plot using the `geom_density()` function from the `ggplot2` package:
+
+(ref:ch7-freqdens) **Density plot of bison counts for 39 surveyed herds.**
+  
+```{r ch7-freqdens, fig.cap='(ref:ch7-freqdens)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+  
+  bison %>% ggplot(aes(herd)) +
+  geom_density() +
+  labs(x = "Herd size", y = "Frequency") +
+  My_theme
+```
+
+The density plot of the dependent variable (Fig. \@ref(fig:ch7-freqdens)) shows a distribution with a broadly normal distribution.
+  
+#### Balance of categorical variables {#nb-balance7}
+
+The balance of the categorical variable `type` (forest type) can be checked using the `table` function.
+
+```{r ch7-type-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+table(bison$type)
+```
+
+The design of the study is well balanced with respect to forest type.  
+  
+#### Zeros in the response variable {#nb-zeros7}
+
+The number of zeros in the response variable needs to be considered and will inform selection of the appropriate statistical model. The percentage of zeros in the response variable can be calculated with:  
+
+```{r ch7-zeros, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+round((sum(bison$herd == 0) / nrow(bison))*100,0)
+```
+
+The response variable does not include any zeros.  
+
+#### Multicollinearity among covariates {#nb-collin7}  
+
+If covariates in a model are correlated, then there is a risk that the model may produce unstable parameter estimates with inflated standard errors. Here we examine the relationships among model covariates using the `ggpairs` command from the `GGally` library.  
+
+(ref:ch7-ggpairs) **Plot matrix of covariates showing frequency plots, boxplots, frequency histograms, and frequency polygons.**  
+
+```{r ch7-ggpairs, fig.cap='(ref:ch7-ggpairs)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+bison %>% 
+    ggpairs(columns = c("elev","dist","cover","type"), 
+         aes(colour = type, alpha = 0.8), 
+              lower = list(combo = wrap("facethist", 
+           binwidth = 2)))
+```
+
+The plot matrix in Fig. \@ref(fig:ch7-ggpairs) indicates no evidence of strong collinearity.     
+
+#### Relationships among dependent and independent variables {#nb-rels7}
+
+Visual inspection of the data using plots will illustrate the nature of relationships among model covariates:
+
+(ref:ch7-scatter1) **Multipanel scatterplot of number of bison herd against elevation for different forest types with a line of best fit plotted.**
+
+```{r ch7-scatter1, fig.cap='(ref:ch7-scatter1)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(bison, aes(x = elev, y = (herd))) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, 
+             height = 0.5, width = 0.25) +
+geom_smooth(formula = y ~ x, method = 'lm', 
+             colour = 'red', se = FALSE, 
+          linewidth = 1.5) +
+  My_theme +
+  xlab("Elevation (m)") + ylab("Herd size") +
+  facet_grid(.~type)
+```
+
+The plots in Fig. \@ref(fig:ch7-scatter1) show a weak positive relationship between elevation and bison herd size in all three forest types, but without evidence for an interaction.  
+
+(ref:ch7-scatter2) **Multipanel scatterplot of number of bison herd against elevation for different forest types with a line of best fit plotted.**
+
+```{r ch7-scatter2, fig.cap='(ref:ch7-scatter2)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(bison, aes(x = dist, y = (herd))) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, 
+             height = 0.5, width = 0.25) +
+geom_smooth(formula = y ~ x, method = 'lm', 
+             colour = 'red', se = FALSE, 
+          linewidth = 1.5) +
+  My_theme +
+  xlab("Distance (m)") + ylab("Herd size") +
+  facet_grid(.~type)
+```
+
+The plots in Fig. \@ref(fig:ch7-scatter2) show no clear relationship between distance to open meadows and bison herd size in all three forest types.  
+
+
+(ref:ch7-scatter3) **Multipanel scatterplot of number of bison herd against elevation for different forest types with a line of best fit plotted.**
+
+```{r ch7-scatter3, fig.cap='(ref:ch7-scatter3)', fig.align='center', fig.dim=c(6, 4), cache = TRUE, message = FALSE, echo=TRUE, warning=FALSE}
+
+ggplot(bison, aes(x = cover, y = (herd))) +
+  geom_jitter(shape = 16, size = 5, alpha = 0.5, 
+             height = 0.5, width = 0.25) +
+geom_smooth(formula = y ~ x, method = 'lm', 
+             colour = 'red', se = FALSE, 
+          linewidth = 1.5) +
+  My_theme +
+  xlab("Cover (%)") + ylab("Herd size") +
+  facet_grid(.~type)
+```
+
+The plots in Fig. \@ref(fig:ch7-scatter3) show a contrasting relationship between forest cover and bison herd size in different forest types, indicating a possible interaction between the effects of forest cover and forest type on herd size.  
+
+
+#### Independence of response variable {#nb-indep7}  
+
+For the variable `site`:  
+
+```{r ch7-site-table, comment = "", echo=TRUE, warning=FALSE, message=FALSE}
+dim(bison)
+```
+  
+An assumption for a GLM is that each observation in a dataset is independent of all others. In the case of the present study each row of data represents data from a separate survey of a different group of bison, with data collected by scientists familiar with large mammal survey methods. While we can assume these data were independent, like much ecological data there is the potential for spatial dependency.  
+
+
+### Select and fit a statistical model {#gp-select7}
+
+The study was designed to identify habitat preference in European bison based on counting herd size. Since the dependent variable comprises count data a Poisson is an appropriate distribution as a starting point to model the data. The Poisson is a non-normal distribution that is effective for modelling strictly positive integer data (such as counts), though zeros are possible. It has a single parameter (lambda, $\lambda$), which is both the mean and variance of the response variable.  
+
+The link function is used to link the response variable (number of bison) and the predictor function. In the case of a Poisson GLM the default is a log link function. The link function is needed to ensure model fitted values remain positive, while permitting zeros in the data.  
+
+The Poisson model will include both main terms and a 2-way interaction between forest cover and forest type, identified in Fig. \@ref(fig:ch7-scatter3), fitted using the `glmmTMB` package.  
+
+```{r ch7-pois1, message=FALSE, echo=TRUE, warning=FALSE}
+Pois1 <- glmmTMB(herd ~ elev + dist + cover * type,
+                        family = poisson(link = "log"),
+                          data = bison)
+```
+
+### Conduct model checks  
+
+We must first check the dispersion parameter. Poisson GLMs assume that the mean and variance of the response variable vary at the same rate, which must be confirmed. Over- or underdispersion means that a Poisson distribution does not adequately model the variance (i.e. the variance is greater or less than the mean) and is not appropriate for the model.  
+
+```{r ch7-over1, message=FALSE, echo=TRUE, warning=FALSE}
+check_overdispersion(Pois1)
+```
+
+The Poisson model is underdispersed.
+
+As an alternative, we'll try a **negative binomial** distribution with the same model formulation:
+
+```{r ch7-nb1, message=FALSE, echo=TRUE, warning=FALSE}
+nb1 <- glmmTMB(herd ~ elev + dist + cover * type,
+                      family = nbinom1(link = "log"),
+                        data = bison)
+check_overdispersion(nb1)
+
+```
+
+This negative binomial model is similarly underdispersed. How can we model underdispersed data? An option is a generalised Poisson GLM. Consul (1989) devised a derivation of the Poisson distribution that can handle under- (and over-) dispersion by the inclusion of an additional parameter, which permits more flexibility in generalising the Poisson distribution.
+  
+```{r ch7-gp1, message=FALSE, echo=TRUE, warning=FALSE}
+gp1 <- glmmTMB(herd ~ elev + dist + cover * type,
+                      family = genpois,
+                        data = bison)
+check_overdispersion(gp1)
+
+```
+
+Mild, but non-significant, overdispersion.
+
+We can compare AIC scores for the Poisson, negative binomial and generalised Poisson models:
+
+```{r ch7-aic-comp, comment = "", cache = TRUE,  message = FALSE, echo=TRUE, warning=FALSE}
+models <- list(Pois1,nb1, gp1)
+names(models)<-c("Poisson","neg binomial",
+                 "gen Poisson")
+print(aictab(cand.set = models, sort = T, digits = 2))
+```
+
+The generalised Poisson GLM gives a much improved fit to the data.
+
+**Warning**
+
+A warning message appears after running these models:
+
+_# Warning message:_  
+_# In (function (start, objective, gradient = NULL, hessian = NULL, :_  
+_# NA/NaN function evaluation_  
+
+This warning appears because the model is _overparamaterised_; i.e. the data do not contain enough information to estimate the model parameters reliably.
+
+In this situation we should consider model selection with the aim of removing some parameters. We can perform model selection using the `drop1` command.
+
+```{r ch7-drop1-1, message=FALSE, echo=TRUE, warning=FALSE}
+round(drop1(gp1),1)
+```
+
+The output table for the `drop1` function gives AIC scores for the full model, and with each model parameter sequentially removed. In the case of model `gp1`, removal of the variable `dist` brings an improvement in model fit (AIC = 176.76) compared with the full model (AIC = 178.46). Consequently, we remove `dist`, refit the refined model, and again implement `drop1`:
+
+```{r ch7-drop1-2, message=FALSE, echo=TRUE, warning=FALSE}
+gp2 <- glmmTMB(herd ~ elev + cover * type,
+                      family = genpois,
+                      data = bison)
+round(drop1(gp2),1)
+```
+
+For the refined model `gp2`, removal of the variable `elev` brings an improvement in model fit (AIC = 175.38) compared with the full model (AIC = 176.76). We now remove `elev` and refit the refined model, and implement `drop1`:
+
+```{r ch7-drop1-3, message=FALSE, echo=TRUE, warning=FALSE}
+gp3 <- glmmTMB(herd ~ cover * type,
+                      family = genpois,
+                      data = bison)
+round(drop1(gp3),1)
+```
+
+For `gp3`, removal of the interaction `cover:type` results in a decline in model goodness of fit (AIC = 184.27) compared with the full model (AIC = 175.38); we can no longer improve model fit by dropping further variables. Notably, running model `gp3` no longer elicits a warning, indicating that this refined model is no longer overparamaterised.
+
+We continue with model checks using the `simulateResiduals` function from the `DHARMa` package to simulate scaled residuals from the fitted model. These can then be plotted against model fitted values.
+
+```{r ch7-simRes1, message=FALSE, echo=TRUE, warning=FALSE}
+Res1 <- simulateResiduals(fittedModel = gp3, plot = F)
+```
+
+Homogeneity of residual variance is assessed by plotting model residual variance against fitted values:   
+
+```{r ch7-plotRes1a, message=FALSE, echo=TRUE, warning=FALSE}
+par(mfrow = c(1,1), mar = c(2,2,2,2))
+plotResiduals(Res1)
+```
+
+There is no problem with residuals plotted against model fitted values.  
+
+Next, plot model residuals against each covariate included in the model:  
+
+```{r ch7-plotRes1b, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = bison$cover)
+plotResiduals(Res1, form = bison$type)
+```
+
+And those not included in the model:
+
+```{r ch7-plotRes1c, message=FALSE, echo=TRUE, warning=FALSE}
+plotResiduals(Res1, form = bison$elev)
+plotResiduals(Res1, form = bison$dist)
+```
+
+There are no problems with the patterns of these residuals.  
+
+Check normality of residuals, dispersion and presence of outliers:  
+
+```{r ch7-plotQQnb1, message=FALSE, echo=TRUE, warning=FALSE}
+plotQQunif(Res1)
+```
+
+There is no problem with normality of residuals, presence of outliers, or dispersion of the model.   
+  
+### Interpret and present model output  
+
+Obtain model output with:  
+
+```{r ch7-sumnb1, message=FALSE, echo=TRUE, warning=FALSE}
+out <- summary(gp3)
+print(out, digits = 2, signif.stars=FALSE)
+```
+
+Table 7.1: **Mean estimates for the number of bison at forest sites in eastern Poland as a function of forest cover and forest type, modelled using a generalised Poisson GLM.**
+
+|Model parameter                   |Estimate|Z value |P value|
+|:---------------------------------|:------:|:------:|:-----:|
+|Intercept                         |  3.09  |  7.24  | <0.001|
+|Cover                             | -0.01  | -2.07  |  0.038|
+|Woodland type(Oak)                | -2.15  | -3.51  | <0.001|
+|Woodland type(Wetland)            | -1.40  | -2.83  |  0.005|  
+|Cover : Woodland type(Oak)        |  0.03  |  3.70  | <0.001|  
+|Cover : Woodland type(Wetland)    |  0.02  |  2.76  |  0.006|  
+  
+These results (Table 7.1) show a statistically significant difference in the relationship between forest cover and bison herd size for different forest types, with a significantly different slope for oak and wetland forest in comparison with conifer forest.  
+
+### Visualise the results  
+
+The final step to fitting a GLM is to visualise the model. We will plot model `gp3` using the `plot_model` command from the `sjPlot` package.  
+
+(ref:ch7-final-plot) **Mean bison herd size at forest sites in eastern Poland as a function of forest cover and forest type, modelled using a generalised Poisson GLM. Shaded areas are 95% confidence intervals. Points are observed data for different sampling sites.**  
+
+```{r ch7-final-plot, fig.cap='(ref:ch7-final-plot)', fig.align ='center', fig.dim = c(6,5), message=FALSE, echo=TRUE, warning=FALSE}
+set_theme(legend.pos = "top")
+plot_model(gp3, type = "eff", 
+               terms = c("cover", "type"),
+              colors = c("forestgreen","blue","red2"),
+           show.data = TRUE,
+               title = "", 
+         axis.title = c("Forest cover (%)",
+                          "Bison herd size"),
+         show.legend = TRUE,
+        legend.title = ("Forest type")) +
+        scale_y_continuous(limits = c(0, 30)) +
+                    My_theme
+```
+
+The results of this statistical analysis can be summarised as follows:  
+
+_A generalised Poisson GLM was fitted to data on European bison herd size in different forest sites in eastern Poland. There was a statistically significant interaction between forest cover and forest type, with a negative relationship between bison herd size and forest cover in coniferous forest stands and a positive relationship for oak and wetland forest (Table 7.1), Fig. \@ref(fig:ch7-final-plot). We detected no significant effect of site elevation and distance to open grassland meadows on herd size._
+
+## Conclusions
+
+In this analysis we identified a problem with underdispersion in a Poisson GLM. Underdispersion was handled by fitting a generalised Poisson GLM. A problem of overparamaterisation of the full model was dealt with by backward manual model selection using the `drop1` function.
+
+  
